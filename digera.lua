@@ -1,9 +1,10 @@
 --[[
-    IBdihP Hub - Digimon Era Standalone (v4.0 - Dedicated 3-Menu Engine)
+    IBdihP Hub - Digimon Era Standalone (v4.1 - 4-Menu Engine & Partner Teleport)
     Features:
-      1. Auto Farm: Teleport to Digimon -> Skills 1,2,3 -> Collect Drops -> Delay -> Repeat
-      2. Auto Chest: Teleport to Chest -> Open -> Kill Guard (if spawned) -> Re-open -> Delay -> Repeat (Auto-turns OFF when 0 chests left)
-      3. Open Map: Teleport to Carrots -> Collect -> Delay -> Repeat (Auto-turns OFF when 0 carrots left)
+      1. Auto Farm: Teleports Player + Partner -> Skills 1,2,3 -> Collect Drops -> Repeat
+      2. Auto Chest: Teleports Player + Partner -> Open -> Kill Guard -> Re-open -> Repeat
+      3. Open Map: Teleports to Carrots -> Collect -> Repeat
+      4. Auto Potion: Reads InFight HealthText -> Uses Key 4 at Threshold -> Auto-Back when Empty
 ]]
 
 local Players = game:GetService("Players")
@@ -16,7 +17,7 @@ local VirtualInputManager = game:GetService("VirtualInputManager")
 
 local LocalPlayer = Players.LocalPlayer
 
-print("[IBdihP] Initializing v4.0 Standalone Engine...")
+print("[IBdihP] Initializing v4.1 Standalone Engine...")
 
 -- ==========================================
 -- 1. LOBBY & EXECUTOR ACCESS CHECK
@@ -42,14 +43,15 @@ local Config = {
     AutoFarm = false,
     AutoChests = false,
     OpenMap = false,
+    AutoPotion = true,
     
-    -- Delay Times (Seconds: 1.0 to 5.0)
+    -- Delay Times & Thresholds
     FarmDelay = 1.0,
     ChestsDelay = 1.5,
-    OpenMapDelay = 1.0
+    OpenMapDelay = 1.0,
+    PotionThreshold = 60 -- Default 60% HP
 }
 
--- Table to store UI controller callbacks for automatic visual toggling
 local UIControllers = {}
 
 -- ==========================================
@@ -76,8 +78,8 @@ if not success or not ScreenGui.Parent then
 end
 
 local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 240, 0, 260)
-MainFrame.Position = UDim2.new(0.05, 0, 0.30, 0)
+MainFrame.Size = UDim2.new(0, 240, 0, 310)
+MainFrame.Position = UDim2.new(0.05, 0, 0.25, 0)
 MainFrame.BackgroundColor3 = Color3.fromRGB(22, 22, 30)
 MainFrame.BorderSizePixel = 0
 MainFrame.Parent = ScreenGui
@@ -89,7 +91,7 @@ MainCorner.Parent = MainFrame
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, 0, 0, 32)
 TitleLabel.BackgroundColor3 = Color3.fromRGB(32, 32, 45)
-TitleLabel.Text = "IBdihP | Standalone Engine v4"
+TitleLabel.Text = "IBdihP | Standalone Engine v4.1"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.TextSize = 13
 TitleLabel.Font = Enum.Font.GothamBold
@@ -105,7 +107,7 @@ ContentContainer.Position = UDim2.new(0, 0, 0, 34)
 ContentContainer.BackgroundTransparency = 1
 ContentContainer.BorderSizePixel = 0
 ContentContainer.ScrollBarThickness = 4
-ContentContainer.CanvasSize = UDim2.new(0, 0, 0, 250)
+ContentContainer.CanvasSize = UDim2.new(0, 0, 0, 320)
 ContentContainer.Parent = MainFrame
 
 local UIListLayout = Instance.new("UIListLayout")
@@ -119,9 +121,9 @@ local ColorON = Color3.fromRGB(45, 160, 80)
 local ColorCLOSE = Color3.fromRGB(70, 70, 90)
 
 -- ==========================================
--- 4. SWITCH SECTION BUILDER
+-- 4. SWITCH SECTION BUILDERS
 -- ==========================================
-local function createSwitchSection(name, configToggleKey, configDelayKey, order)
+local function createSwitchSection(name, configToggleKey, configDelayKey, isThreshold, order)
     local SectionFrame = Instance.new("Frame")
     SectionFrame.Size = UDim2.new(1, -20, 0, 62)
     SectionFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 42)
@@ -146,7 +148,7 @@ local function createSwitchSection(name, configToggleKey, configDelayKey, order)
     local SwitchBG = Instance.new("TextButton")
     SwitchBG.Size = UDim2.new(0, 46, 0, 22)
     SwitchBG.Position = UDim2.new(1, -56, 0, 8)
-    SwitchBG.BackgroundColor3 = ColorOFF
+    SwitchBG.BackgroundColor3 = Config[configToggleKey] and ColorON or ColorOFF
     SwitchBG.Text = ""
     SwitchBG.AutoButtonColor = false
     SwitchBG.Parent = SectionFrame
@@ -157,7 +159,7 @@ local function createSwitchSection(name, configToggleKey, configDelayKey, order)
 
     local SwitchKnob = Instance.new("Frame")
     SwitchKnob.Size = UDim2.new(0, 18, 0, 18)
-    SwitchKnob.Position = UDim2.new(0, 2, 0.5, 0)
+    SwitchKnob.Position = Config[configToggleKey] and UDim2.new(1, -20, 0.5, 0) or UDim2.new(0, 2, 0.5, 0)
     SwitchKnob.AnchorPoint = Vector2.new(0, 0.5)
     SwitchKnob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
     SwitchKnob.BorderSizePixel = 0
@@ -174,7 +176,6 @@ local function createSwitchSection(name, configToggleKey, configDelayKey, order)
         print("[IBdihP] " .. name .. " toggled: " .. tostring(state))
     end
 
-    -- Save controller so script loops can automatically disable toggles when done
     UIControllers[configToggleKey] = setToggleState
 
     SwitchBG.MouseButton1Click:Connect(function()
@@ -193,8 +194,9 @@ local function createSwitchSection(name, configToggleKey, configDelayKey, order)
     SliderBGCorner.CornerRadius = UDim.new(0, 4)
     SliderBGCorner.Parent = SliderBG
 
+    local initialPos = isThreshold and ((Config[configDelayKey] - 10) / 80) or ((Config[configDelayKey] - 1) / 4)
     local SliderFill = Instance.new("Frame")
-    SliderFill.Size = UDim2.new((Config[configDelayKey] - 1) / 4, 0, 1, 0)
+    SliderFill.Size = UDim2.new(math.clamp(initialPos, 0, 1), 0, 1, 0)
     SliderFill.BackgroundColor3 = Color3.fromRGB(90, 110, 200)
     SliderFill.BorderSizePixel = 0
     SliderFill.Parent = SliderBG
@@ -206,7 +208,7 @@ local function createSwitchSection(name, configToggleKey, configDelayKey, order)
     local SliderLabel = Instance.new("TextLabel")
     SliderLabel.Size = UDim2.new(1, 0, 1, 0)
     SliderLabel.BackgroundTransparency = 1
-    SliderLabel.Text = string.format("Delay: %.1fs", Config[configDelayKey])
+    SliderLabel.Text = isThreshold and string.format("HP Threshold: %d%%", Config[configDelayKey]) or string.format("Delay: %.1fs", Config[configDelayKey])
     SliderLabel.TextColor3 = Color3.fromRGB(220, 220, 230)
     SliderLabel.TextSize = 10
     SliderLabel.Font = Enum.Font.GothamBold
@@ -216,11 +218,18 @@ local function createSwitchSection(name, configToggleKey, configDelayKey, order)
     local isDraggingSlider = false
     local function updateSlider(input)
         local pos = math.clamp((input.Position.X - SliderBG.AbsolutePosition.X) / SliderBG.AbsoluteSize.X, 0, 1)
-        local value = 1.0 + (pos * 4.0)
-        value = math.floor(value * 10 + 0.5) / 10
-        Config[configDelayKey] = value
-        SliderFill.Size = UDim2.new((value - 1) / 4, 0, 1, 0)
-        SliderLabel.Text = string.format("Delay: %.1fs", value)
+        if isThreshold then
+            local val = math.floor(10 + (pos * 80) + 0.5)
+            Config[configDelayKey] = val
+            SliderFill.Size = UDim2.new(pos, 0, 1, 0)
+            SliderLabel.Text = string.format("HP Threshold: %d%%", val)
+        else
+            local value = 1.0 + (pos * 4.0)
+            value = math.floor(value * 10 + 0.5) / 10
+            Config[configDelayKey] = value
+            SliderFill.Size = UDim2.new(pos, 0, 1, 0)
+            SliderLabel.Text = string.format("Delay: %.1fs", value)
+        end
     end
 
     SliderBG.InputBegan:Connect(function(input)
@@ -244,9 +253,10 @@ local function createSwitchSection(name, configToggleKey, configDelayKey, order)
 end
 
 -- Create Menu Sections
-createSwitchSection("Auto Farm", "AutoFarm", "FarmDelay", 1)
-createSwitchSection("Auto Chest", "AutoChests", "ChestsDelay", 2)
-createSwitchSection("Open Map", "OpenMap", "OpenMapDelay", 3)
+createSwitchSection("Auto Farm", "AutoFarm", "FarmDelay", false, 1)
+createSwitchSection("Auto Chest", "AutoChests", "ChestsDelay", false, 2)
+createSwitchSection("Open Map", "OpenMap", "OpenMapDelay", false, 3)
+createSwitchSection("Auto Potion", "AutoPotion", "PotionThreshold", true, 4)
 
 -- Stop & Close Button
 local CloseBtn = Instance.new("TextButton")
@@ -268,6 +278,7 @@ CloseBtn.MouseButton1Click:Connect(function()
     Config.AutoFarm = false
     Config.AutoChests = false
     Config.OpenMap = false
+    Config.AutoPotion = false
     Config.ScriptRunning = false
     ScreenGui:Destroy()
     print("[IBdihP] Script stopped and UI closed.")
@@ -314,6 +325,21 @@ local function getRoot()
     return nil
 end
 
+-- Teleports all friendly partner Digimon models instantly next to your character
+local function teleportPartner(targetCFrame)
+    for _, obj in ipairs(Workspace:GetChildren()) do
+        if obj:IsA("Model") and obj ~= LocalPlayer.Character then
+            local ownerAttr = obj:GetAttribute("Owner") or obj:GetAttribute("Player")
+            if ownerAttr == LocalPlayer.Name or ownerAttr == LocalPlayer.UserId then
+                local partnerRoot = obj.PrimaryPart or obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChildWhichIsA("BasePart")
+                if partnerRoot then
+                    partnerRoot.CFrame = targetCFrame * CFrame.new(3, 0, 2)
+                end
+            end
+        end
+    end
+end
+
 local function firePrompt(prompt)
     if not prompt or not prompt:IsA("ProximityPrompt") then return end
     if fireproximityprompt then
@@ -325,7 +351,63 @@ local function firePrompt(prompt)
     end
 end
 
--- Fires Digimon partner skills 1, 2, and 3 only
+-- Clicks the in-game Back / Retreat button inside PlayerGui
+local function pressBackButton()
+    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+    if not playerGui then return end
+
+    for _, desc in ipairs(playerGui:GetDescendants()) do
+        if desc:IsA("TextButton") or desc:IsA("ImageButton") then
+            local btnName = desc.Name:lower()
+            local btnText = desc:IsA("TextButton") and desc.Text:lower() or ""
+            
+            if btnName == "back" or btnName == "retreat" or btnText == "back" or btnText == "retreat" then
+                if desc.Visible and desc.Active then
+                    print("[IBdihP] Emergency Retreat: Clicking Back Button (" .. desc.Name .. ")")
+                    pcall(function()
+                        desc:Activate()
+                    end)
+                end
+            end
+        end
+    end
+end
+
+-- Reads active Digimon HP percentage from PlayerGui HealthText
+local function getInFightHPPercentage()
+    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+    if not playerGui then return 100 end
+    
+    local mainUI = playerGui:FindFirstChild("Mobile_MainUI")
+    if not mainUI then return 100 end
+    
+    local partyFrame = mainUI:FindFirstChild("PartyFrame")
+    if not partyFrame then return 100 end
+    
+    local inFight = partyFrame:FindFirstChild("InFight")
+    if not inFight then return 100 end
+    
+    local healthFrame = inFight:FindFirstChild("HealthFrame")
+    if not healthFrame then return 100 end
+    
+    local healthText = healthFrame:FindFirstChild("HealthText")
+    if not healthText or not healthText:IsA("TextLabel") then return 100 end
+    
+    local text = healthText.Text
+    local cur, max = text:match("(%d+)%s*/%s*(%d+)")
+    if cur and max and tonumber(max) > 0 then
+        return (tonumber(cur) / tonumber(max)) * 100
+    end
+    
+    local pct = text:match("(%d+)%%")
+    if pct then
+        return tonumber(pct)
+    end
+    
+    return 100
+end
+
+-- Fires Digimon partner skills 1, 2, and 3 only (Slot 4 excluded)
 local function fireSkills()
     pcall(function()
         local events = ReplicatedStorage:FindFirstChild("Events")
@@ -376,6 +458,7 @@ local function collectDropsSequence(root)
 
         if obj:IsA("BasePart") and (obj.Name:find("Drop") or obj.Name:find("Loot") or obj:GetAttribute("Drop") or (obj.Parent and (obj.Parent.Name == "Drops" or obj.Parent.Name == "LootDrops"))) then
             root.CFrame = obj.CFrame
+            teleportPartner(root.CFrame)
             local prompt = obj:FindFirstChildOfClass("ProximityPrompt")
             if prompt and prompt.Enabled then
                 firePrompt(prompt)
@@ -411,7 +494,49 @@ task.spawn(function()
 end)
 
 -- ==========================================
--- 6. TARGET SELECTORS
+-- 6. AUTO POTION & RETREAT LOOP
+-- ==========================================
+task.spawn(function()
+    local lowHPChecks = 0
+    while Config.ScriptRunning do
+        if Config.AutoPotion and (Config.AutoFarm or Config.AutoChests) then
+            local currentHP = getInFightHPPercentage()
+            if currentHP <= Config.PotionThreshold then
+                print(string.format("[IBdihP] Low HP detected (%d%% <= %d%%). Pressing Key 4 (Potion)...", math.floor(currentHP), Config.PotionThreshold))
+                
+                -- Press Key 4 (Hotbar Slot 4)
+                pcall(function()
+                    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Four, false, game)
+                    task.wait(0.05)
+                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Four, false, game)
+                end)
+                
+                task.wait(0.6)
+                local afterHP = getInFightHPPercentage()
+                if afterHP <= Config.PotionThreshold then
+                    lowHPChecks = lowHPChecks + 1
+                    -- If HP remains low after 3 consecutive attempts (1.5s), potion is empty!
+                    if lowHPChecks >= 3 then
+                        print("[IBdihP] Potion empty/depleted! Triggering Emergency Retreat...")
+                        if UIControllers.AutoFarm then UIControllers.AutoFarm(false) else Config.AutoFarm = false end
+                        if UIControllers.AutoChests then UIControllers.AutoChests(false) else Config.AutoChests = false end
+                        pressBackButton()
+                        lowHPChecks = 0
+                        task.wait(2.0)
+                    end
+                else
+                    lowHPChecks = 0
+                end
+            else
+                lowHPChecks = 0
+            end
+        end
+        task.wait(0.5)
+    end
+end)
+
+-- ==========================================
+-- 7. TARGET SELECTORS
 -- ==========================================
 local function getClosestEnemy(root, requireGuard)
     local closestEnemy = nil
@@ -505,13 +630,14 @@ local function battleEnemy(enemyRoot, enemyHum)
         if not currentRoot then break end
         
         currentRoot.CFrame = enemyRoot.CFrame * CFrame.new(0, 0, Config.FarmDistance)
+        teleportPartner(currentRoot.CFrame)
         fireSkills()
         task.wait(0.2)
     end
 end
 
 -- ==========================================
--- 7. AUTO FARM LOOP
+-- 8. AUTO FARM LOOP
 -- ==========================================
 task.spawn(function()
     while Config.ScriptRunning do
@@ -537,7 +663,7 @@ task.spawn(function()
 end)
 
 -- ==========================================
--- 8. AUTO CHEST LOOP (WITH GUARD KILL & AUTO-OFF)
+-- 9. AUTO CHEST LOOP (WITH GUARD KILL & AUTO-OFF)
 -- ==========================================
 task.spawn(function()
     while Config.ScriptRunning do
@@ -546,8 +672,9 @@ task.spawn(function()
             if root then
                 local chestPart, chestPrompt = getAvailableChest(root)
                 if chestPart and chestPrompt then
-                    -- 1. Teleport to chest and open it
+                    -- 1. Teleport player and partner to chest and open it
                     root.CFrame = chestPart.CFrame + Vector3.new(0, 3, 0)
+                    teleportPartner(root.CFrame)
                     task.wait(0.3)
                     firePrompt(chestPrompt)
                     
@@ -570,6 +697,7 @@ task.spawn(function()
                         local returnRoot = getRoot()
                         if returnRoot then
                             returnRoot.CFrame = chestPart.CFrame + Vector3.new(0, 3, 0)
+                            teleportPartner(returnRoot.CFrame)
                             task.wait(0.3)
                             firePrompt(chestPrompt)
                         end
@@ -577,7 +705,6 @@ task.spawn(function()
                     
                     task.wait(Config.ChestsDelay)
                 else
-                    -- No more unopened chests found -> automatically toggle OFF
                     print("[IBdihP] No more unopened chests found. Disabling Auto Chest.")
                     if UIControllers.AutoChests then
                         UIControllers.AutoChests(false)
@@ -592,7 +719,7 @@ task.spawn(function()
 end)
 
 -- ==========================================
--- 9. OPEN MAP LOOP (CARROTS WITH AUTO-OFF)
+-- 10. OPEN MAP LOOP (CARROTS WITH AUTO-OFF)
 -- ==========================================
 task.spawn(function()
     while Config.ScriptRunning do
@@ -602,11 +729,11 @@ task.spawn(function()
                 local carrotPart, carrotPrompt = getAvailableCarrot(root)
                 if carrotPart and carrotPrompt then
                     root.CFrame = carrotPart.CFrame + Vector3.new(0, 2, 0)
+                    teleportPartner(root.CFrame)
                     task.wait(0.2)
                     firePrompt(carrotPrompt)
                     task.wait(Config.OpenMapDelay)
                 else
-                    -- No more carrots found -> automatically toggle OFF
                     print("[IBdihP] No more carrots found. Disabling Open Map.")
                     if UIControllers.OpenMap then
                         UIControllers.OpenMap(false)
@@ -621,8 +748,8 @@ task.spawn(function()
 end)
 
 StarterGui:SetCore("SendNotification", {
-    Title = "IBdihP v4.0 Loaded";
-    Text = "Dedicated 3-Menu Standalone Engine Active!";
+    Title = "IBdihP v4.1 Loaded";
+    Text = "4-Menu Standalone Engine & Partner Teleport Active!";
     Duration = 4;
 })
-print("[IBdihP] Standalone Engine v4.0 running successfully.")
+print("[IBdihP] Standalone Engine v4.1 running successfully.")
