@@ -1,11 +1,6 @@
 --[[
-    IBdihP Hub - Digimon Era Standalone (v2.1 - Sequential Farm & Drop Collector)
-    Features:
-      • Sequential Auto Farm (Teleport -> Kill -> Move to Drops -> Delay -> Repeat)
-      • Auto Collect Chests (with 1.0s - 5.0s Delay Slider)
-      • Auto Collect Drops (with 1.0s - 5.0s Delay Slider)
-      • Auto Collect Carrots (with 1.0s - 5.0s Delay Slider)
-      • Lightweight, Draggable Custom UI (gethui + DisplayOrder 9999)
+    IBdihP Hub - Digimon Era Standalone (v3.0 - Dedicated Sequential Auto Farm)
+    Logic: Teleport to Enemy -> Fire All Skills -> Enemy Dies -> Collect Drops -> Wait (Slider Delay) -> Repeat
 ]]
 
 local Players = game:GetService("Players")
@@ -13,10 +8,12 @@ local Workspace = game:GetService("Workspace")
 local StarterGui = game:GetService("StarterGui")
 local CoreGui = game:GetService("CoreGui")
 local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 
 local LocalPlayer = Players.LocalPlayer
 
-print("[IBdihP] Initializing v2.1 Standalone...")
+print("[IBdihP] Initializing Dedicated Auto Farm v3.0...")
 
 -- ==========================================
 -- 1. LOBBY & EXECUTOR ACCESS CHECK
@@ -36,19 +33,9 @@ end
 -- ==========================================
 local Config = {
     ScriptRunning = true,
-    FarmDistance = 5,
-    
-    -- Feature Toggles
     AutoFarm = false,
-    AutoChests = false,
-    AutoDrops = false,
-    AutoCarrots = false,
-    
-    -- Delay Times (Seconds: 1.0 to 5.0)
-    FarmDelay = 1.0,
-    ChestsDelay = 1.5,
-    DropsDelay = 1.0,
-    CarrotsDelay = 1.5
+    FarmDistance = 5,
+    FarmDelay = 1.0 -- Seconds: 1.0 to 5.0 (Controlled by slider)
 }
 
 -- ==========================================
@@ -75,8 +62,8 @@ if not success or not ScreenGui.Parent then
 end
 
 local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 240, 0, 310)
-MainFrame.Position = UDim2.new(0.05, 0, 0.28, 0)
+MainFrame.Size = UDim2.new(0, 240, 0, 145)
+MainFrame.Position = UDim2.new(0.05, 0, 0.35, 0)
 MainFrame.BackgroundColor3 = Color3.fromRGB(22, 22, 30)
 MainFrame.BorderSizePixel = 0
 MainFrame.Parent = ScreenGui
@@ -88,7 +75,7 @@ MainCorner.Parent = MainFrame
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, 0, 0, 32)
 TitleLabel.BackgroundColor3 = Color3.fromRGB(32, 32, 45)
-TitleLabel.Text = "IBdihP | Simple Controls v2.1"
+TitleLabel.Text = "IBdihP | Sequential Auto Farm"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.TextSize = 13
 TitleLabel.Font = Enum.Font.GothamBold
@@ -98,143 +85,117 @@ local TitleCorner = Instance.new("UICorner")
 TitleCorner.CornerRadius = UDim.new(0, 8)
 TitleCorner.Parent = TitleLabel
 
-local ContentContainer = Instance.new("ScrollingFrame")
-ContentContainer.Size = UDim2.new(1, 0, 1, -36)
-ContentContainer.Position = UDim2.new(0, 0, 0, 34)
-ContentContainer.BackgroundTransparency = 1
-ContentContainer.BorderSizePixel = 0
-ContentContainer.ScrollBarThickness = 4
-ContentContainer.CanvasSize = UDim2.new(0, 0, 0, 340)
-ContentContainer.Parent = MainFrame
-
-local UIListLayout = Instance.new("UIListLayout")
-UIListLayout.Padding = UDim.new(0, 8)
-UIListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-UIListLayout.Parent = ContentContainer
-
 local ColorOFF = Color3.fromRGB(180, 50, 50)
 local ColorON = Color3.fromRGB(45, 160, 80)
 local ColorCLOSE = Color3.fromRGB(70, 70, 90)
 
--- ==========================================
--- 4. UI COMPONENT BUILDERS (BUTTON + SLIDER)
--- ==========================================
-local function createFeatureSection(name, configToggleKey, configDelayKey, order)
-    local SectionFrame = Instance.new("Frame")
-    SectionFrame.Size = UDim2.new(1, -20, 0, 58)
-    SectionFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 42)
-    SectionFrame.LayoutOrder = order
-    SectionFrame.Parent = ContentContainer
+-- Section Container
+local SectionFrame = Instance.new("Frame")
+SectionFrame.Size = UDim2.new(1, -20, 0, 58)
+SectionFrame.Position = UDim2.new(0, 10, 0, 40)
+SectionFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 42)
+SectionFrame.Parent = MainFrame
 
-    local SectionCorner = Instance.new("UICorner")
-    SectionCorner.CornerRadius = UDim.new(0, 6)
-    SectionCorner.Parent = SectionFrame
+local SectionCorner = Instance.new("UICorner")
+SectionCorner.CornerRadius = UDim.new(0, 6)
+SectionCorner.Parent = SectionFrame
 
-    -- Toggle Button
-    local ToggleBtn = Instance.new("TextButton")
-    ToggleBtn.Size = UDim2.new(1, -12, 0, 26)
-    ToggleBtn.Position = UDim2.new(0, 6, 0, 5)
-    ToggleBtn.BackgroundColor3 = ColorOFF
-    ToggleBtn.Text = name .. ": OFF"
-    ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    ToggleBtn.TextSize = 11
-    ToggleBtn.Font = Enum.Font.GothamBold
-    ToggleBtn.AutoButtonColor = false
-    ToggleBtn.Parent = SectionFrame
+-- Auto Farm Toggle Button
+local ToggleBtn = Instance.new("TextButton")
+ToggleBtn.Size = UDim2.new(1, -12, 0, 26)
+ToggleBtn.Position = UDim2.new(0, 6, 0, 5)
+ToggleBtn.BackgroundColor3 = ColorOFF
+ToggleBtn.Text = "Auto Farm: OFF"
+ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleBtn.TextSize = 11
+ToggleBtn.Font = Enum.Font.GothamBold
+ToggleBtn.AutoButtonColor = false
+ToggleBtn.Parent = SectionFrame
 
-    local BtnCorner = Instance.new("UICorner")
-    BtnCorner.CornerRadius = UDim.new(0, 4)
-    BtnCorner.Parent = ToggleBtn
+local BtnCorner = Instance.new("UICorner")
+BtnCorner.CornerRadius = UDim.new(0, 4)
+BtnCorner.Parent = ToggleBtn
 
-    ToggleBtn.MouseButton1Click:Connect(function()
-        Config[configToggleKey] = not Config[configToggleKey]
-        ToggleBtn.Text = Config[configToggleKey] and (name .. ": ON") or (name .. ": OFF")
-        ToggleBtn.BackgroundColor3 = Config[configToggleKey] and ColorON or ColorOFF
-        print("[IBdihP] " .. name .. " toggled: " .. tostring(Config[configToggleKey]))
-    end)
+ToggleBtn.MouseButton1Click:Connect(function()
+    Config.AutoFarm = not Config.AutoFarm
+    ToggleBtn.Text = Config.AutoFarm and "Auto Farm: ON" or "Auto Farm: OFF"
+    ToggleBtn.BackgroundColor3 = Config.AutoFarm and ColorON or ColorOFF
+    print("[IBdihP] Auto Farm toggled: " .. tostring(Config.AutoFarm))
+end)
 
-    -- Delay Slider Bar
-    local SliderBG = Instance.new("TextButton")
-    SliderBG.Size = UDim2.new(1, -12, 0, 18)
-    SliderBG.Position = UDim2.new(0, 6, 0, 35)
-    SliderBG.BackgroundColor3 = Color3.fromRGB(20, 20, 28)
-    SliderBG.Text = ""
-    SliderBG.AutoButtonColor = false
-    SliderBG.Parent = SectionFrame
+-- Delay Slider Bar (1.0s - 5.0s)
+local SliderBG = Instance.new("TextButton")
+SliderBG.Size = UDim2.new(1, -12, 0, 18)
+SliderBG.Position = UDim2.new(0, 6, 0, 35)
+SliderBG.BackgroundColor3 = Color3.fromRGB(20, 20, 28)
+SliderBG.Text = ""
+SliderBG.AutoButtonColor = false
+SliderBG.Parent = SectionFrame
 
-    local SliderBGCorner = Instance.new("UICorner")
-    SliderBGCorner.CornerRadius = UDim.new(0, 4)
-    SliderBGCorner.Parent = SliderBG
+local SliderBGCorner = Instance.new("UICorner")
+SliderBGCorner.CornerRadius = UDim.new(0, 4)
+SliderBGCorner.Parent = SliderBG
 
-    local SliderFill = Instance.new("Frame")
-    SliderFill.Size = UDim2.new((Config[configDelayKey] - 1) / 4, 0, 1, 0)
-    SliderFill.BackgroundColor3 = Color3.fromRGB(90, 110, 200)
-    SliderFill.BorderSizePixel = 0
-    SliderFill.Parent = SliderBG
+local SliderFill = Instance.new("Frame")
+SliderFill.Size = UDim2.new((Config.FarmDelay - 1) / 4, 0, 1, 0)
+SliderFill.BackgroundColor3 = Color3.fromRGB(90, 110, 200)
+SliderFill.BorderSizePixel = 0
+SliderFill.Parent = SliderBG
 
-    local SliderFillCorner = Instance.new("UICorner")
-    SliderFillCorner.CornerRadius = UDim.new(0, 4)
-    SliderFillCorner.Parent = SliderFill
+local SliderFillCorner = Instance.new("UICorner")
+SliderFillCorner.CornerRadius = UDim.new(0, 4)
+SliderFillCorner.Parent = SliderFill
 
-    local SliderLabel = Instance.new("TextLabel")
-    SliderLabel.Size = UDim2.new(1, 0, 1, 0)
-    SliderLabel.BackgroundTransparency = 1
-    SliderLabel.Text = string.format("Delay: %.1fs", Config[configDelayKey])
-    SliderLabel.TextColor3 = Color3.fromRGB(220, 220, 230)
-    SliderLabel.TextSize = 10
-    SliderLabel.Font = Enum.Font.GothamBold
-    SliderLabel.ZIndex = 2
-    SliderLabel.Parent = SliderBG
+local SliderLabel = Instance.new("TextLabel")
+SliderLabel.Size = UDim2.new(1, 0, 1, 0)
+SliderLabel.BackgroundTransparency = 1
+SliderLabel.Text = string.format("Delay: %.1fs", Config.FarmDelay)
+SliderLabel.TextColor3 = Color3.fromRGB(220, 220, 230)
+SliderLabel.TextSize = 10
+SliderLabel.Font = Enum.Font.GothamBold
+SliderLabel.ZIndex = 2
+SliderLabel.Parent = SliderBG
 
-    -- Slider Drag Calculation
-    local isDraggingSlider = false
-    local function updateSlider(input)
-        local pos = math.clamp((input.Position.X - SliderBG.AbsolutePosition.X) / SliderBG.AbsoluteSize.X, 0, 1)
-        local value = 1.0 + (pos * 4.0)
-        value = math.floor(value * 10 + 0.5) / 10
-        Config[configDelayKey] = value
-        SliderFill.Size = UDim2.new((value - 1) / 4, 0, 1, 0)
-        SliderLabel.Text = string.format("Delay: %.1fs", value)
-    end
-
-    SliderBG.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            isDraggingSlider = true
-            updateSlider(input)
-        end
-    end)
-
-    UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            isDraggingSlider = false
-        end
-    end)
-
-    UserInputService.InputChanged:Connect(function(input)
-        if isDraggingSlider and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-            updateSlider(input)
-        end
-    end)
+local isDraggingSlider = false
+local function updateSlider(input)
+    local pos = math.clamp((input.Position.X - SliderBG.AbsolutePosition.X) / SliderBG.AbsoluteSize.X, 0, 1)
+    local value = 1.0 + (pos * 4.0)
+    value = math.floor(value * 10 + 0.5) / 10
+    Config.FarmDelay = value
+    SliderFill.Size = UDim2.new((value - 1) / 4, 0, 1, 0)
+    SliderLabel.Text = string.format("Delay: %.1fs", value)
 end
 
--- Create Sections
-createFeatureSection("Auto Farm", "AutoFarm", "FarmDelay", 1)
-createFeatureSection("Auto Chests", "AutoChests", "ChestsDelay", 2)
-createFeatureSection("Auto Drops", "AutoDrops", "DropsDelay", 3)
-createFeatureSection("Auto Carrots", "AutoCarrots", "CarrotsDelay", 4)
+SliderBG.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        isDraggingSlider = true
+        updateSlider(input)
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        isDraggingSlider = false
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if isDraggingSlider and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        updateSlider(input)
+    end
+end)
 
 -- Stop & Close Button
 local CloseBtn = Instance.new("TextButton")
 CloseBtn.Size = UDim2.new(1, -20, 0, 32)
+CloseBtn.Position = UDim2.new(0, 10, 0, 105)
 CloseBtn.BackgroundColor3 = ColorCLOSE
 CloseBtn.Text = "Stop & Close UI"
 CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 CloseBtn.TextSize = 12
 CloseBtn.Font = Enum.Font.GothamBold
 CloseBtn.AutoButtonColor = false
-CloseBtn.LayoutOrder = 10
-CloseBtn.Parent = ContentContainer
+CloseBtn.Parent = MainFrame
 
 local CloseCorner = Instance.new("UICorner")
 CloseCorner.CornerRadius = UDim.new(0, 6)
@@ -242,9 +203,6 @@ CloseCorner.Parent = CloseBtn
 
 CloseBtn.MouseButton1Click:Connect(function()
     Config.AutoFarm = false
-    Config.AutoChests = false
-    Config.AutoDrops = false
-    Config.AutoCarrots = false
     Config.ScriptRunning = false
     ScreenGui:Destroy()
     print("[IBdihP] Script stopped and UI closed.")
@@ -279,7 +237,7 @@ UserInputService.InputChanged:Connect(function(input)
 end)
 
 -- ==========================================
--- 5. HELPER FUNCTIONS
+-- 4. HELPER FUNCTIONS
 -- ==========================================
 local function getRoot()
     local char = LocalPlayer.Character
@@ -302,7 +260,30 @@ local function firePrompt(prompt)
     end
 end
 
--- Sequence Drop Collector (Sweeps dropped loot after kill)
+-- Fires all Digimon partner skills (1 through 5) automatically
+local function fireSkills()
+    -- 1. Trigger Digimon Era RemoteEvent directly if accessible
+    pcall(function()
+        local events = ReplicatedStorage:FindFirstChild("Events")
+        local useMove = events and events:FindFirstChild("UseMove")
+        if useMove then
+            for i = 1, 5 do
+                useMove:FireServer(i)
+            end
+        end
+    end)
+
+    -- 2. Emulate skill key presses 1-5 as a universal fail-safe
+    for _, keyCode in ipairs({Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three, Enum.KeyCode.Four, Enum.KeyCode.Five}) do
+        pcall(function()
+            VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
+            task.wait(0.02)
+            VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
+        end)
+    end
+end
+
+-- Post-Kill Drop Sweeper
 local function collectDropsSequence(root)
     local dropScope = Workspace:FindFirstChild("Drops") 
         or Workspace:FindFirstChild("LootDrops")
@@ -310,9 +291,8 @@ local function collectDropsSequence(root)
         or Workspace
 
     for _, obj in ipairs(dropScope:GetDescendants()) do
-        if not Config.ScriptRunning then break end
+        if not Config.ScriptRunning or not Config.AutoFarm then break end
         if obj:IsA("BasePart") and (obj.Name:find("Drop") or obj.Name:find("Loot") or obj:GetAttribute("Drop") or obj.Parent.Name == "Drops" or obj.Parent.Name == "LootDrops") then
-            -- Teleport directly onto the item to trigger touch collection
             root.CFrame = obj.CFrame
             local prompt = obj:FindFirstChildOfClass("ProximityPrompt")
             if prompt and prompt.Enabled then
@@ -324,84 +304,7 @@ local function collectDropsSequence(root)
 end
 
 -- ==========================================
--- 6. AUTO CHESTS / TREASURE LOOP
--- ==========================================
-task.spawn(function()
-    while Config.ScriptRunning do
-        if Config.AutoChests then
-            local root = getRoot()
-            if root then
-                for _, obj in ipairs(Workspace:GetDescendants()) do
-                    if not Config.AutoChests or not Config.ScriptRunning then break end
-                    if obj:IsA("ProximityPrompt") and obj.Enabled then
-                        local parentModel = obj.Parent
-                        local name = parentModel and parentModel.Name or ""
-                        
-                        if name == "Standard Treasure" or name == "Royal Treasure" or name:find("Treasure") then
-                            local targetPart = parentModel:IsA("BasePart") and parentModel 
-                                or parentModel:FindFirstChildWhichIsA("BasePart")
-                            
-                            if targetPart then
-                                root.CFrame = targetPart.CFrame + Vector3.new(0, 3, 0)
-                                task.wait(0.3)
-                                firePrompt(obj)
-                                task.wait(0.3)
-                            end
-                        end
-                    end
-                end
-            end
-        end
-        task.wait(Config.ChestsDelay)
-    end
-end)
-
--- ==========================================
--- 7. AUTO DROPS / LOOT LOOP (STANDALONE)
--- ==========================================
-task.spawn(function()
-    while Config.ScriptRunning do
-        if Config.AutoDrops and not Config.AutoFarm then
-            local root = getRoot()
-            if root then
-                collectDropsSequence(root)
-            end
-        end
-        task.wait(Config.DropsDelay)
-    end
-end)
-
--- ==========================================
--- 8. AUTO CARROTS LOOP
--- ==========================================
-task.spawn(function()
-    while Config.ScriptRunning do
-        if Config.AutoCarrots then
-            local root = getRoot()
-            if root then
-                for _, obj in ipairs(Workspace:GetDescendants()) do
-                    if not Config.AutoCarrots or not Config.ScriptRunning then break end
-                    
-                    if obj.Name == "Carrot" or obj.Name:find("Carrot") then
-                        local targetPart = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart")
-                        if targetPart then
-                            root.CFrame = targetPart.CFrame + Vector3.new(0, 2, 0)
-                            local prompt = obj:FindFirstChildOfClass("ProximityPrompt", true)
-                            if prompt and prompt.Enabled then
-                                firePrompt(prompt)
-                            end
-                            task.wait(0.2)
-                        end
-                    end
-                end
-            end
-        end
-        task.wait(Config.CarrotsDelay)
-    end
-end)
-
--- ==========================================
--- 9. SEQUENTIAL ENEMY FARMER LOOP
+-- 5. SEQUENTIAL ENEMY FARMER & SKILL LOOP
 -- ==========================================
 local function getClosestEnemy(root)
     local closestEnemy = nil
@@ -440,24 +343,25 @@ task.spawn(function()
             if root then
                 local targetEnemyRoot, targetHum = getClosestEnemy(root)
                 if targetEnemyRoot and targetHum then
-                    -- 1. Battle until that specific enemy dies
+                    -- 1. Battle enemy until dead while automatically firing all skills
                     while Config.AutoFarm and Config.ScriptRunning and targetHum.Health > 0 and targetEnemyRoot.Parent do
                         local currentRoot = getRoot()
                         if not currentRoot then break end
                         currentRoot.CFrame = targetEnemyRoot.CFrame * CFrame.new(0, 0, Config.FarmDistance)
-                        task.wait(0.15)
+                        fireSkills()
+                        task.wait(0.2)
                     end
                     
-                    -- 2. Enemy died: wait brief interval for drops to spawn in workspace
+                    -- 2. Enemy died: brief wait for loot drops to spawn
                     task.wait(0.35)
                     
-                    -- 3. Move to dropped items sequentially
+                    -- 3. Sweep and collect dropped loot items
                     local postKillRoot = getRoot()
                     if postKillRoot then
                         collectDropsSequence(postKillRoot)
                     end
                     
-                    -- 4. Wait configured slider delay before selecting the next target
+                    -- 4. Wait slider delay before moving to the next target
                     task.wait(Config.FarmDelay)
                 end
             end
@@ -467,8 +371,8 @@ task.spawn(function()
 end)
 
 StarterGui:SetCore("SendNotification", {
-    Title = "IBdihP v2.1 Loaded";
-    Text = "Sequential Auto Farm & Drop Collector Active!";
+    Title = "IBdihP v3.0 Loaded";
+    Text = "Sequential Auto Farm & Auto Skills Active!";
     Duration = 4;
 })
-print("[IBdihP] v2.1 UI mounted and sequential loop running successfully.")
+print("[IBdihP] Dedicated Auto Farm v3.0 running successfully.")
