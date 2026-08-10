@@ -1,10 +1,9 @@
 --[[
-    IBdihP Hub - Digimon Era Standalone (v3.4 - Guard Priority & Auto Chest Switch)
-    Logic:
-      • Priority 1: Guard Enemy Alive -> Lock On & Kill (Skills 1, 2, 3) -> Collect Drops
-      • Priority 2: Auto Chests ON -> Open Chest -> Wait for Guard -> Kill Guard -> Collect Drops
-      • Priority 3: Auto Farm ON -> Farm Normal Enemies -> Collect Drops
-      • Emergency Retreat: Clicks "Back" button immediately if Alive Digimon == 1
+    IBdihP Hub - Digimon Era Standalone (v4.0 - Dedicated 3-Menu Engine)
+    Features:
+      1. Auto Farm: Teleport to Digimon -> Skills 1,2,3 -> Collect Drops -> Delay -> Repeat
+      2. Auto Chest: Teleport to Chest -> Open -> Kill Guard (if spawned) -> Re-open -> Delay -> Repeat (Auto-turns OFF when 0 chests left)
+      3. Open Map: Teleport to Carrots -> Collect -> Delay -> Repeat (Auto-turns OFF when 0 carrots left)
 ]]
 
 local Players = game:GetService("Players")
@@ -17,7 +16,7 @@ local VirtualInputManager = game:GetService("VirtualInputManager")
 
 local LocalPlayer = Players.LocalPlayer
 
-print("[IBdihP] Initializing Dedicated Auto Farm & Chests v3.4...")
+print("[IBdihP] Initializing v4.0 Standalone Engine...")
 
 -- ==========================================
 -- 1. LOBBY & EXECUTOR ACCESS CHECK
@@ -37,13 +36,21 @@ end
 -- ==========================================
 local Config = {
     ScriptRunning = true,
+    FarmDistance = 5,
+    
+    -- Feature Toggles
     AutoFarm = false,
     AutoChests = false,
-    EmergencyRetreat = true,
-    FarmDistance = 5,
-    FarmDelay = 1.0,        -- Controlled by Farm UI slider (1.0s to 5.0s)
-    ChestsDelay = 1.5       -- Controlled by Chests UI slider (1.0s to 5.0s)
+    OpenMap = false,
+    
+    -- Delay Times (Seconds: 1.0 to 5.0)
+    FarmDelay = 1.0,
+    ChestsDelay = 1.5,
+    OpenMapDelay = 1.0
 }
+
+-- Table to store UI controller callbacks for automatic visual toggling
+local UIControllers = {}
 
 -- ==========================================
 -- 3. BULLETPROOF UI MOUNTING (SWITCH UI)
@@ -69,7 +76,7 @@ if not success or not ScreenGui.Parent then
 end
 
 local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 240, 0, 215)
+MainFrame.Size = UDim2.new(0, 240, 0, 260)
 MainFrame.Position = UDim2.new(0.05, 0, 0.30, 0)
 MainFrame.BackgroundColor3 = Color3.fromRGB(22, 22, 30)
 MainFrame.BorderSizePixel = 0
@@ -82,7 +89,7 @@ MainCorner.Parent = MainFrame
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, 0, 0, 32)
 TitleLabel.BackgroundColor3 = Color3.fromRGB(32, 32, 45)
-TitleLabel.Text = "IBdihP | Sequential Farm & Chests"
+TitleLabel.Text = "IBdihP | Standalone Engine v4"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.TextSize = 13
 TitleLabel.Font = Enum.Font.GothamBold
@@ -92,6 +99,21 @@ local TitleCorner = Instance.new("UICorner")
 TitleCorner.CornerRadius = UDim.new(0, 8)
 TitleCorner.Parent = TitleLabel
 
+local ContentContainer = Instance.new("ScrollingFrame")
+ContentContainer.Size = UDim2.new(1, 0, 1, -36)
+ContentContainer.Position = UDim2.new(0, 0, 0, 34)
+ContentContainer.BackgroundTransparency = 1
+ContentContainer.BorderSizePixel = 0
+ContentContainer.ScrollBarThickness = 4
+ContentContainer.CanvasSize = UDim2.new(0, 0, 0, 250)
+ContentContainer.Parent = MainFrame
+
+local UIListLayout = Instance.new("UIListLayout")
+UIListLayout.Padding = UDim.new(0, 8)
+UIListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+UIListLayout.Parent = ContentContainer
+
 local ColorOFF = Color3.fromRGB(150, 45, 45)
 local ColorON = Color3.fromRGB(45, 160, 80)
 local ColorCLOSE = Color3.fromRGB(70, 70, 90)
@@ -99,12 +121,12 @@ local ColorCLOSE = Color3.fromRGB(70, 70, 90)
 -- ==========================================
 -- 4. SWITCH SECTION BUILDER
 -- ==========================================
-local function createSwitchSection(name, configToggleKey, configDelayKey, posY)
+local function createSwitchSection(name, configToggleKey, configDelayKey, order)
     local SectionFrame = Instance.new("Frame")
     SectionFrame.Size = UDim2.new(1, -20, 0, 62)
-    SectionFrame.Position = UDim2.new(0, 10, 0, posY)
     SectionFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 42)
-    SectionFrame.Parent = MainFrame
+    SectionFrame.LayoutOrder = order
+    SectionFrame.Parent = ContentContainer
 
     local SectionCorner = Instance.new("UICorner")
     SectionCorner.CornerRadius = UDim.new(0, 6)
@@ -145,11 +167,18 @@ local function createSwitchSection(name, configToggleKey, configDelayKey, posY)
     KnobCorner.CornerRadius = UDim.new(1, 0)
     KnobCorner.Parent = SwitchKnob
 
+    local function setToggleState(state)
+        Config[configToggleKey] = state
+        SwitchBG.BackgroundColor3 = state and ColorON or ColorOFF
+        SwitchKnob.Position = state and UDim2.new(1, -20, 0.5, 0) or UDim2.new(0, 2, 0.5, 0)
+        print("[IBdihP] " .. name .. " toggled: " .. tostring(state))
+    end
+
+    -- Save controller so script loops can automatically disable toggles when done
+    UIControllers[configToggleKey] = setToggleState
+
     SwitchBG.MouseButton1Click:Connect(function()
-        Config[configToggleKey] = not Config[configToggleKey]
-        SwitchBG.BackgroundColor3 = Config[configToggleKey] and ColorON or ColorOFF
-        SwitchKnob.Position = Config[configToggleKey] and UDim2.new(1, -20, 0.5, 0) or UDim2.new(0, 2, 0.5, 0)
-        print("[IBdihP] " .. name .. " toggled: " .. tostring(Config[configToggleKey]))
+        setToggleState(not Config[configToggleKey])
     end)
 
     local SliderBG = Instance.new("TextButton")
@@ -212,24 +241,24 @@ local function createSwitchSection(name, configToggleKey, configDelayKey, posY)
             updateSlider(input)
         end
     end)
-
-    return SwitchBG, SwitchKnob
 end
 
-local FarmSwitchBG, FarmSwitchKnob = createSwitchSection("Auto Farm", "AutoFarm", "FarmDelay", 40)
-local ChestsSwitchBG, ChestsSwitchKnob = createSwitchSection("Auto Chests", "AutoChests", "ChestsDelay", 108)
+-- Create Menu Sections
+createSwitchSection("Auto Farm", "AutoFarm", "FarmDelay", 1)
+createSwitchSection("Auto Chest", "AutoChests", "ChestsDelay", 2)
+createSwitchSection("Open Map", "OpenMap", "OpenMapDelay", 3)
 
 -- Stop & Close Button
 local CloseBtn = Instance.new("TextButton")
 CloseBtn.Size = UDim2.new(1, -20, 0, 30)
-CloseBtn.Position = UDim2.new(0, 10, 0, 176)
 CloseBtn.BackgroundColor3 = ColorCLOSE
 CloseBtn.Text = "Stop & Close UI"
 CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 CloseBtn.TextSize = 12
 CloseBtn.Font = Enum.Font.GothamBold
 CloseBtn.AutoButtonColor = false
-CloseBtn.Parent = MainFrame
+CloseBtn.LayoutOrder = 10
+CloseBtn.Parent = ContentContainer
 
 local CloseCorner = Instance.new("UICorner")
 CloseCorner.CornerRadius = UDim.new(0, 6)
@@ -238,6 +267,7 @@ CloseCorner.Parent = CloseBtn
 CloseBtn.MouseButton1Click:Connect(function()
     Config.AutoFarm = false
     Config.AutoChests = false
+    Config.OpenMap = false
     Config.ScriptRunning = false
     ScreenGui:Destroy()
     print("[IBdihP] Script stopped and UI closed.")
@@ -292,49 +322,6 @@ local function firePrompt(prompt)
         prompt:InputHoldBegin()
         task.wait(prompt.HoldDuration or 0.2)
         prompt:InputHoldEnd()
-    end
-end
-
-local function getAliveDigimonCount()
-    local count = 0
-    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
-        if LocalPlayer.Character.Humanoid.Health > 0 then
-            count = count + 1
-        end
-    end
-
-    for _, obj in ipairs(Workspace:GetChildren()) do
-        if obj:IsA("Model") and obj ~= LocalPlayer.Character then
-            local ownerAttr = obj:GetAttribute("Owner") or obj:GetAttribute("Player")
-            if ownerAttr == LocalPlayer.Name or ownerAttr == LocalPlayer.UserId then
-                local hum = obj:FindFirstChildOfClass("Humanoid")
-                if hum and hum.Health > 0 then
-                    count = count + 1
-                end
-            end
-        end
-    end
-    return count
-end
-
-local function pressBackButton()
-    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
-    if not playerGui then return end
-
-    for _, desc in ipairs(playerGui:GetDescendants()) do
-        if desc:IsA("TextButton") or desc:IsA("ImageButton") then
-            local btnName = desc.Name:lower()
-            local btnText = desc:IsA("TextButton") and desc.Text:lower() or ""
-            
-            if btnName == "back" or btnName == "retreat" or btnText == "back" or btnText == "retreat" then
-                if desc.Visible and desc.Active then
-                    print("[IBdihP] Emergency Retreat: Clicking Back Button (" .. desc.Name .. ")")
-                    pcall(function()
-                        desc:Activate()
-                    end)
-                end
-            end
-        end
     end
 end
 
@@ -399,10 +386,10 @@ local function collectDropsSequence(root)
 end
 
 -- ==========================================
--- 6. TARGET SELECTORS (GUARD / CHEST / ENEMY)
+-- 6. TARGET SELECTORS
 -- ==========================================
-local function getGuardEnemy(root)
-    local closestGuard = nil
+local function getClosestEnemy(root, requireGuard)
+    local closestEnemy = nil
     local closestHum = nil
     local shortestDistance = math.huge
     
@@ -411,23 +398,25 @@ local function getGuardEnemy(root)
         or Workspace
 
     for _, obj in ipairs(searchScope:GetChildren()) do
-        if obj:IsA("Model") and obj ~= LocalPlayer.Character and isGuardEnemy(obj) then
-            if not Players:GetPlayerFromCharacter(obj) then
-                local hum = obj:FindFirstChildOfClass("Humanoid")
-                local enemyRoot = obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart
-                
-                if hum and hum.Health > 0 and enemyRoot then
-                    local dist = (root.Position - enemyRoot.Position).Magnitude
-                    if dist < shortestDistance then
-                        shortestDistance = dist
-                        closestGuard = enemyRoot
-                        closestHum = hum
+        if obj:IsA("Model") and obj ~= LocalPlayer.Character then
+            if not requireGuard or isGuardEnemy(obj) then
+                if not Players:GetPlayerFromCharacter(obj) then
+                    local hum = obj:FindFirstChildOfClass("Humanoid")
+                    local enemyRoot = obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart
+                    
+                    if hum and hum.Health > 0 and enemyRoot then
+                        local dist = (root.Position - enemyRoot.Position).Magnitude
+                        if dist < shortestDistance then
+                            shortestDistance = dist
+                            closestEnemy = enemyRoot
+                            closestHum = hum
+                        end
                     end
                 end
             end
         end
     end
-    return closestGuard, closestHum
+    return closestEnemy, closestHum
 end
 
 local function getAvailableChest(root)
@@ -458,58 +447,35 @@ local function getAvailableChest(root)
     return closestPart, closestPrompt
 end
 
-local function getClosestEnemy(root)
-    local closestEnemy = nil
-    local closestHum = nil
+local function getAvailableCarrot(root)
+    local closestPart = nil
+    local closestPrompt = nil
     local shortestDistance = math.huge
-    
-    local searchScope = Workspace:FindFirstChild("Enemies") 
-        or (Workspace:FindFirstChild("GameMap") and Workspace.GameMap:FindFirstChild("Enemies"))
-        or Workspace
 
-    for _, obj in ipairs(searchScope:GetChildren()) do
-        if obj:IsA("Model") and obj ~= LocalPlayer.Character then
-            if not Players:GetPlayerFromCharacter(obj) then
-                local hum = obj:FindFirstChildOfClass("Humanoid")
-                local enemyRoot = obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart
-                
-                if hum and hum.Health > 0 and enemyRoot then
-                    local dist = (root.Position - enemyRoot.Position).Magnitude
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj.Name == "Carrot" or obj.Name:find("Carrot") then
+            local prompt = obj:FindFirstChildOfClass("ProximityPrompt", true)
+            if prompt and prompt.Enabled then
+                local targetPart = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart")
+                if targetPart then
+                    local dist = (root.Position - targetPart.Position).Magnitude
                     if dist < shortestDistance then
                         shortestDistance = dist
-                        closestEnemy = enemyRoot
-                        closestHum = hum
+                        closestPart = targetPart
+                        closestPrompt = prompt
                     end
                 end
             end
         end
     end
-    return closestEnemy, closestHum
+    return closestPart, closestPrompt
 end
 
--- Combat executor (handles both normal enemies and Guards)
-local function battleEnemy(enemyRoot, enemyHum, targetLabel)
+-- Core combat execution helper
+local function battleEnemy(enemyRoot, enemyHum)
     local combatStart = tick()
-    print("[IBdihP] Engaging Target: " .. targetLabel .. " (" .. enemyRoot.Parent.Name .. ")")
-
     while Config.ScriptRunning and (Config.AutoFarm or Config.AutoChests) and enemyHum.Health > 0 and enemyRoot.Parent do
         if (tick() - combatStart) > 15.0 then break end
-        
-        -- Emergency Retreat Check
-        if Config.EmergencyRetreat and getAliveDigimonCount() == 1 then
-            print("[IBdihP] Emergency! Alive Digimon == 1. Retreating from combat...")
-            Config.AutoFarm = false
-            Config.AutoChests = false
-            FarmSwitchBG.BackgroundColor3 = ColorOFF
-            FarmSwitchKnob.Position = UDim2.new(0, 2, 0.5, 0)
-            ChestsSwitchBG.BackgroundColor3 = ColorOFF
-            ChestsSwitchKnob.Position = UDim2.new(0, 2, 0.5, 0)
-            
-            pressBackButton()
-            task.wait(2.0)
-            return false
-        end
-
         local currentRoot = getRoot()
         if not currentRoot then break end
         
@@ -517,72 +483,27 @@ local function battleEnemy(enemyRoot, enemyHum, targetLabel)
         fireSkills()
         task.wait(0.2)
     end
-    
-    task.wait(0.35)
-    local postKillRoot = getRoot()
-    if postKillRoot then
-        collectDropsSequence(postKillRoot)
-    end
-    return true
 end
 
 -- ==========================================
--- 7. MASTER WORKER LOOP (PRIORITY ENGINE)
+-- 7. AUTO FARM LOOP
 -- ==========================================
 task.spawn(function()
     while Config.ScriptRunning do
-        if Config.AutoFarm or Config.AutoChests then
-            -- 0. Standalone Emergency Retreat check before selecting targets
-            if Config.EmergencyRetreat and getAliveDigimonCount() == 1 then
-                print("[IBdihP] Emergency Retreat Triggered (Alive Digimon == 1).")
-                Config.AutoFarm = false
-                Config.AutoChests = false
-                FarmSwitchBG.BackgroundColor3 = ColorOFF
-                FarmSwitchKnob.Position = UDim2.new(0, 2, 0.5, 0)
-                ChestsSwitchBG.BackgroundColor3 = ColorOFF
-                ChestsSwitchKnob.Position = UDim2.new(0, 2, 0.5, 0)
-                
-                pressBackButton()
-                task.wait(2.0)
-            else
-                local root = getRoot()
-                if root then
-                    -- PRIORITY 1: Guard Digimon present anywhere -> Kill at all costs!
-                    local guardRoot, guardHum = getGuardEnemy(root)
-                    if guardRoot and guardHum then
-                        battleEnemy(guardRoot, guardHum, "Guard Digimon [PRIORITY]")
-                        task.wait(Config.FarmDelay)
-                    else
-                        -- PRIORITY 2: Auto Chests ON -> Open chest and wait for Guard to spawn
-                        if Config.AutoChests then
-                            local chestPart, chestPrompt = getAvailableChest(root)
-                            if chestPart and chestPrompt then
-                                root.CFrame = chestPart.CFrame + Vector3.new(0, 3, 0)
-                                task.wait(0.3)
-                                firePrompt(chestPrompt)
-                                print("[IBdihP] Chest opened. Waiting for Guard to spawn...")
-                                
-                                -- Wait up to 2.0s for a Guard Digimon to spawn
-                                local waitStart = tick()
-                                while (tick() - waitStart) < 2.0 do
-                                    local gRoot, gHum = getGuardEnemy(getRoot())
-                                    if gRoot and gHum then
-                                        battleEnemy(gRoot, gHum, "Chest Guard Digimon")
-                                        break
-                                    end
-                                    task.wait(0.2)
-                                end
-                                task.wait(Config.ChestsDelay)
-                            end
-                        -- PRIORITY 3: Standard Auto Farm ON -> Farm normal closest enemies
-                        elseif Config.AutoFarm then
-                            local enemyRoot, enemyHum = getClosestEnemy(root)
-                            if enemyRoot and enemyHum then
-                                battleEnemy(enemyRoot, enemyHum, "Normal Enemy")
-                                task.wait(Config.FarmDelay)
-                            end
-                        end
+        if Config.AutoFarm then
+            local root = getRoot()
+            if root then
+                local enemyRoot, enemyHum = getClosestEnemy(root, false)
+                if enemyRoot and enemyHum then
+                    battleEnemy(enemyRoot, enemyHum)
+                    
+                    task.wait(0.35)
+                    local postKillRoot = getRoot()
+                    if postKillRoot then
+                        collectDropsSequence(postKillRoot)
                     end
+                    
+                    task.wait(Config.FarmDelay)
                 end
             end
         end
@@ -590,9 +511,93 @@ task.spawn(function()
     end
 end)
 
+-- ==========================================
+-- 8. AUTO CHEST LOOP (WITH GUARD KILL & AUTO-OFF)
+-- ==========================================
+task.spawn(function()
+    while Config.ScriptRunning do
+        if Config.AutoChests then
+            local root = getRoot()
+            if root then
+                local chestPart, chestPrompt = getAvailableChest(root)
+                if chestPart and chestPrompt then
+                    -- 1. Teleport to chest and open it
+                    root.CFrame = chestPart.CFrame + Vector3.new(0, 3, 0)
+                    task.wait(0.3)
+                    firePrompt(chestPrompt)
+                    
+                    -- 2. Scan up to 1.5 seconds to detect if a Guard Digimon spawned
+                    local waitStart = tick()
+                    while (tick() - waitStart) < 1.5 do
+                        local guardRoot, guardHum = getClosestEnemy(getRoot(), true)
+                        if guardRoot and guardHum then
+                            print("[IBdihP] Guard Digimon detected! Engaging...")
+                            battleEnemy(guardRoot, guardHum)
+                            task.wait(0.35)
+                            collectDropsSequence(getRoot())
+                            break
+                        end
+                        task.wait(0.2)
+                    end
+                    
+                    -- 3. Teleport back to chest and re-open (if still present/enabled)
+                    if chestPrompt and chestPrompt.Parent and chestPrompt.Enabled then
+                        local returnRoot = getRoot()
+                        if returnRoot then
+                            returnRoot.CFrame = chestPart.CFrame + Vector3.new(0, 3, 0)
+                            task.wait(0.3)
+                            firePrompt(chestPrompt)
+                        end
+                    end
+                    
+                    task.wait(Config.ChestsDelay)
+                else
+                    -- No more unopened chests found -> automatically toggle OFF
+                    print("[IBdihP] No more unopened chests found. Disabling Auto Chest.")
+                    if UIControllers.AutoChests then
+                        UIControllers.AutoChests(false)
+                    else
+                        Config.AutoChests = false
+                    end
+                end
+            end
+        end
+        task.wait(0.3)
+    end
+end)
+
+-- ==========================================
+-- 9. OPEN MAP LOOP (CARROTS WITH AUTO-OFF)
+-- ==========================================
+task.spawn(function()
+    while Config.ScriptRunning do
+        if Config.OpenMap then
+            local root = getRoot()
+            if root then
+                local carrotPart, carrotPrompt = getAvailableCarrot(root)
+                if carrotPart and carrotPrompt then
+                    root.CFrame = carrotPart.CFrame + Vector3.new(0, 2, 0)
+                    task.wait(0.2)
+                    firePrompt(carrotPrompt)
+                    task.wait(Config.OpenMapDelay)
+                else
+                    -- No more carrots found -> automatically toggle OFF
+                    print("[IBdihP] No more carrots found. Disabling Open Map.")
+                    if UIControllers.OpenMap then
+                        UIControllers.OpenMap(false)
+                    else
+                        Config.OpenMap = false
+                    end
+                end
+            end
+        end
+        task.wait(0.3)
+    end
+end)
+
 StarterGui:SetCore("SendNotification", {
-    Title = "IBdihP v3.4 Loaded";
-    Text = "Guard Priority & Chest Switch Active!";
+    Title = "IBdihP v4.0 Loaded";
+    Text = "Dedicated 3-Menu Standalone Engine Active!";
     Duration = 4;
 })
-print("[IBdihP] Dedicated Auto Farm & Chests v3.4 running successfully.")
+print("[IBdihP] Standalone Engine v4.0 running successfully.")
