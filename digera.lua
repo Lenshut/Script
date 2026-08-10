@@ -385,31 +385,6 @@ local function collectDropsSequence(root)
     end
 end
 
--- Enforces 3x movement speed (48 WalkSpeed) when Auto Farm or Auto Chests is active
-task.spawn(function()
-    while Config.ScriptRunning do
-        local targetSpeed = (Config.AutoFarm or Config.AutoChests) and 48 or 16
-        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
-            LocalPlayer.Character.Humanoid.WalkSpeed = targetSpeed
-        end
-        for _, obj in ipairs(Workspace:GetChildren()) do
-            if obj:IsA("Model") and obj ~= LocalPlayer.Character then
-                local ownerAttr = obj:GetAttribute("Owner") or obj:GetAttribute("Player")
-                if ownerAttr == LocalPlayer.Name or ownerAttr == LocalPlayer.UserId then
-                    local hum = obj:FindFirstChildOfClass("Humanoid")
-                    if hum then
-                        hum.WalkSpeed = targetSpeed
-                    end
-                end
-            end
-        end
-        task.wait(0.3)
-    end
-    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
-        LocalPlayer.Character.Humanoid.WalkSpeed = 16
-    end
-end)
-
 -- ==========================================
 -- 6. TARGET SELECTORS
 -- ==========================================
