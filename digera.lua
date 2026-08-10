@@ -1,7 +1,7 @@
 --[[
-    IBdihP Hub - Digimon Era Standalone (v2.0 - Multi-Feature & Custom Delays)
+    IBdihP Hub - Digimon Era Standalone (v2.1 - Sequential Farm & Drop Collector)
     Features:
-      • Auto Farm (with 1.0s - 5.0s Delay Slider)
+      • Sequential Auto Farm (Teleport -> Kill -> Move to Drops -> Delay -> Repeat)
       • Auto Collect Chests (with 1.0s - 5.0s Delay Slider)
       • Auto Collect Drops (with 1.0s - 5.0s Delay Slider)
       • Auto Collect Carrots (with 1.0s - 5.0s Delay Slider)
@@ -16,7 +16,7 @@ local UserInputService = game:GetService("UserInputService")
 
 local LocalPlayer = Players.LocalPlayer
 
-print("[IBdihP] Initializing v2.0 Standalone...")
+print("[IBdihP] Initializing v2.1 Standalone...")
 
 -- ==========================================
 -- 1. LOBBY & EXECUTOR ACCESS CHECK
@@ -88,7 +88,7 @@ MainCorner.Parent = MainFrame
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, 0, 0, 32)
 TitleLabel.BackgroundColor3 = Color3.fromRGB(32, 32, 45)
-TitleLabel.Text = "IBdihP | Simple Controls v2"
+TitleLabel.Text = "IBdihP | Simple Controls v2.1"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.TextSize = 13
 TitleLabel.Font = Enum.Font.GothamBold
@@ -191,8 +191,8 @@ local function createFeatureSection(name, configToggleKey, configDelayKey, order
     local isDraggingSlider = false
     local function updateSlider(input)
         local pos = math.clamp((input.Position.X - SliderBG.AbsolutePosition.X) / SliderBG.AbsoluteSize.X, 0, 1)
-        local value = 1.0 + (pos * 4.0) -- Maps 0..1 to 1s..5s
-        value = math.floor(value * 10 + 0.5) / 10 -- Round to 1 decimal place
+        local value = 1.0 + (pos * 4.0)
+        value = math.floor(value * 10 + 0.5) / 10
         Config[configDelayKey] = value
         SliderFill.Size = UDim2.new((value - 1) / 4, 0, 1, 0)
         SliderLabel.Text = string.format("Delay: %.1fs", value)
@@ -302,6 +302,27 @@ local function firePrompt(prompt)
     end
 end
 
+-- Sequence Drop Collector (Sweeps dropped loot after kill)
+local function collectDropsSequence(root)
+    local dropScope = Workspace:FindFirstChild("Drops") 
+        or Workspace:FindFirstChild("LootDrops")
+        or (Workspace:FindFirstChild("GameMap") and Workspace.GameMap:FindFirstChild("Drops"))
+        or Workspace
+
+    for _, obj in ipairs(dropScope:GetDescendants()) do
+        if not Config.ScriptRunning then break end
+        if obj:IsA("BasePart") and (obj.Name:find("Drop") or obj.Name:find("Loot") or obj:GetAttribute("Drop") or obj.Parent.Name == "Drops" or obj.Parent.Name == "LootDrops") then
+            -- Teleport directly onto the item to trigger touch collection
+            root.CFrame = obj.CFrame
+            local prompt = obj:FindFirstChildOfClass("ProximityPrompt")
+            if prompt and prompt.Enabled then
+                firePrompt(prompt)
+            end
+            task.wait(0.15)
+        end
+    end
+end
+
 -- ==========================================
 -- 6. AUTO CHESTS / TREASURE LOOP
 -- ==========================================
@@ -336,34 +357,14 @@ task.spawn(function()
 end)
 
 -- ==========================================
--- 7. AUTO DROPS / LOOT LOOP
+-- 7. AUTO DROPS / LOOT LOOP (STANDALONE)
 -- ==========================================
 task.spawn(function()
     while Config.ScriptRunning do
-        if Config.AutoDrops then
+        if Config.AutoDrops and not Config.AutoFarm then
             local root = getRoot()
             if root then
-                -- Check standard Drops/LootDrops folders first, then fallback to Workspace
-                local dropScope = Workspace:FindFirstChild("Drops") 
-                    or Workspace:FindFirstChild("LootDrops")
-                    or (Workspace:FindFirstChild("GameMap") and Workspace.GameMap:FindFirstChild("Drops"))
-                    or Workspace
-
-                for _, obj in ipairs(dropScope:GetDescendants()) do
-                    if not Config.AutoDrops or not Config.ScriptRunning then break end
-                    
-                    -- Look for dropped items (Models or BaseParts with Drop names/attributes)
-                    if obj:IsA("BasePart") and (obj.Name:find("Drop") or obj.Name:find("Loot") or obj:GetAttribute("Drop") or obj.Parent.Name == "Drops" or obj.Parent.Name == "LootDrops") then
-                        root.CFrame = obj.CFrame + Vector3.new(0, 2, 0)
-                        
-                        -- Fire prompt if it requires holding, otherwise touching BasePart collects it
-                        local prompt = obj:FindFirstChildOfClass("ProximityPrompt")
-                        if prompt and prompt.Enabled then
-                            firePrompt(prompt)
-                        end
-                        task.wait(0.15)
-                    end
-                end
+                collectDropsSequence(root)
             end
         end
         task.wait(Config.DropsDelay)
@@ -381,7 +382,6 @@ task.spawn(function()
                 for _, obj in ipairs(Workspace:GetDescendants()) do
                     if not Config.AutoCarrots or not Config.ScriptRunning then break end
                     
-                    -- Look for Carrots scattered around the map
                     if obj.Name == "Carrot" or obj.Name:find("Carrot") then
                         local targetPart = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart")
                         if targetPart then
@@ -401,10 +401,11 @@ task.spawn(function()
 end)
 
 -- ==========================================
--- 9. ENEMY FARMER LOOP
+-- 9. SEQUENTIAL ENEMY FARMER LOOP
 -- ==========================================
 local function getClosestEnemy(root)
     local closestEnemy = nil
+    local closestHum = nil
     local shortestDistance = math.huge
     
     local searchScope = Workspace:FindFirstChild("Enemies") 
@@ -422,13 +423,14 @@ local function getClosestEnemy(root)
                     if dist < shortestDistance then
                         shortestDistance = dist
                         closestEnemy = enemyRoot
+                        closestHum = hum
                     end
                 end
             end
         end
     end
     
-    return closestEnemy
+    return closestEnemy, closestHum
 end
 
 task.spawn(function()
@@ -436,19 +438,37 @@ task.spawn(function()
         if Config.AutoFarm then
             local root = getRoot()
             if root then
-                local targetEnemyRoot = getClosestEnemy(root)
-                if targetEnemyRoot then
-                    root.CFrame = targetEnemyRoot.CFrame * CFrame.new(0, 0, Config.FarmDistance)
+                local targetEnemyRoot, targetHum = getClosestEnemy(root)
+                if targetEnemyRoot and targetHum then
+                    -- 1. Battle until that specific enemy dies
+                    while Config.AutoFarm and Config.ScriptRunning and targetHum.Health > 0 and targetEnemyRoot.Parent do
+                        local currentRoot = getRoot()
+                        if not currentRoot then break end
+                        currentRoot.CFrame = targetEnemyRoot.CFrame * CFrame.new(0, 0, Config.FarmDistance)
+                        task.wait(0.15)
+                    end
+                    
+                    -- 2. Enemy died: wait brief interval for drops to spawn in workspace
+                    task.wait(0.35)
+                    
+                    -- 3. Move to dropped items sequentially
+                    local postKillRoot = getRoot()
+                    if postKillRoot then
+                        collectDropsSequence(postKillRoot)
+                    end
+                    
+                    -- 4. Wait configured slider delay before selecting the next target
+                    task.wait(Config.FarmDelay)
                 end
             end
         end
-        task.wait(Config.FarmDelay)
+        task.wait(0.2)
     end
 end)
 
 StarterGui:SetCore("SendNotification", {
-    Title = "IBdihP v2 Loaded";
-    Text = "All features & custom delay sliders active!";
+    Title = "IBdihP v2.1 Loaded";
+    Text = "Sequential Auto Farm & Drop Collector Active!";
     Duration = 4;
 })
-print("[IBdihP] v2.0 UI mounted and running successfully.")
+print("[IBdihP] v2.1 UI mounted and sequential loop running successfully.")
