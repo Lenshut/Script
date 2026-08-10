@@ -1,6 +1,6 @@
 --[[
-    IBdihP Hub - Digimon Era Standalone (v3.0 - Dedicated Sequential Auto Farm)
-    Logic: Teleport to Enemy -> Fire All Skills -> Enemy Dies -> Collect Drops -> Wait (Slider Delay) -> Repeat
+    IBdihP Hub - Digimon Era Standalone (v3.1 - Switch UI & Fixed Sequence)
+    Logic: Teleport to Enemy -> Fire Skills (1, 2, 3) -> Enemy Dies -> Collect Drops (Max 2s) -> Wait (Slider Delay) -> Repeat
 ]]
 
 local Players = game:GetService("Players")
@@ -13,7 +13,7 @@ local VirtualInputManager = game:GetService("VirtualInputManager")
 
 local LocalPlayer = Players.LocalPlayer
 
-print("[IBdihP] Initializing Dedicated Auto Farm v3.0...")
+print("[IBdihP] Initializing Dedicated Auto Farm v3.1...")
 
 -- ==========================================
 -- 1. LOBBY & EXECUTOR ACCESS CHECK
@@ -39,7 +39,7 @@ local Config = {
 }
 
 -- ==========================================
--- 3. BULLETPROOF UI MOUNTING
+-- 3. BULLETPROOF UI MOUNTING (SWITCH UI)
 -- ==========================================
 pcall(function()
     local oldGui = CoreGui:FindFirstChild("IBdihP_SimpleUI") 
@@ -62,7 +62,7 @@ if not success or not ScreenGui.Parent then
 end
 
 local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 240, 0, 145)
+MainFrame.Size = UDim2.new(0, 240, 0, 150)
 MainFrame.Position = UDim2.new(0.05, 0, 0.35, 0)
 MainFrame.BackgroundColor3 = Color3.fromRGB(22, 22, 30)
 MainFrame.BorderSizePixel = 0
@@ -85,13 +85,13 @@ local TitleCorner = Instance.new("UICorner")
 TitleCorner.CornerRadius = UDim.new(0, 8)
 TitleCorner.Parent = TitleLabel
 
-local ColorOFF = Color3.fromRGB(180, 50, 50)
+local ColorOFF = Color3.fromRGB(150, 45, 45)
 local ColorON = Color3.fromRGB(45, 160, 80)
 local ColorCLOSE = Color3.fromRGB(70, 70, 90)
 
 -- Section Container
 local SectionFrame = Instance.new("Frame")
-SectionFrame.Size = UDim2.new(1, -20, 0, 58)
+SectionFrame.Size = UDim2.new(1, -20, 0, 62)
 SectionFrame.Position = UDim2.new(0, 10, 0, 40)
 SectionFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 42)
 SectionFrame.Parent = MainFrame
@@ -100,33 +100,56 @@ local SectionCorner = Instance.new("UICorner")
 SectionCorner.CornerRadius = UDim.new(0, 6)
 SectionCorner.Parent = SectionFrame
 
--- Auto Farm Toggle Button
-local ToggleBtn = Instance.new("TextButton")
-ToggleBtn.Size = UDim2.new(1, -12, 0, 26)
-ToggleBtn.Position = UDim2.new(0, 6, 0, 5)
-ToggleBtn.BackgroundColor3 = ColorOFF
-ToggleBtn.Text = "Auto Farm: OFF"
-ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-ToggleBtn.TextSize = 11
-ToggleBtn.Font = Enum.Font.GothamBold
-ToggleBtn.AutoButtonColor = false
-ToggleBtn.Parent = SectionFrame
+-- Switch Label
+local SwitchLabel = Instance.new("TextLabel")
+SwitchLabel.Size = UDim2.new(0.6, 0, 0, 26)
+SwitchLabel.Position = UDim2.new(0, 10, 0, 6)
+SwitchLabel.BackgroundTransparency = 1
+SwitchLabel.Text = "Auto Farm"
+SwitchLabel.TextColor3 = Color3.fromRGB(240, 240, 255)
+SwitchLabel.TextSize = 12
+SwitchLabel.Font = Enum.Font.GothamBold
+SwitchLabel.TextXAlignment = Enum.TextXAlignment.Left
+SwitchLabel.Parent = SectionFrame
 
-local BtnCorner = Instance.new("UICorner")
-BtnCorner.CornerRadius = UDim.new(0, 4)
-BtnCorner.Parent = ToggleBtn
+-- Switch Pill Background
+local SwitchBG = Instance.new("TextButton")
+SwitchBG.Size = UDim2.new(0, 46, 0, 22)
+SwitchBG.Position = UDim2.new(1, -56, 0, 8)
+SwitchBG.BackgroundColor3 = ColorOFF
+SwitchBG.Text = ""
+SwitchBG.AutoButtonColor = false
+SwitchBG.Parent = SectionFrame
 
-ToggleBtn.MouseButton1Click:Connect(function()
+local SwitchBGCorner = Instance.new("UICorner")
+SwitchBGCorner.CornerRadius = UDim.new(1, 0)
+SwitchBGCorner.Parent = SwitchBG
+
+-- Switch Knob (White Circle)
+local SwitchKnob = Instance.new("Frame")
+SwitchKnob.Size = UDim2.new(0, 18, 0, 18)
+SwitchKnob.Position = UDim2.new(0, 2, 0.5, 0)
+SwitchKnob.AnchorPoint = Vector2.new(0, 0.5)
+SwitchKnob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+SwitchKnob.BorderSizePixel = 0
+SwitchKnob.Parent = SwitchBG
+
+local KnobCorner = Instance.new("UICorner")
+KnobCorner.CornerRadius = UDim.new(1, 0)
+KnobCorner.Parent = SwitchKnob
+
+-- Switch Click Logic
+SwitchBG.MouseButton1Click:Connect(function()
     Config.AutoFarm = not Config.AutoFarm
-    ToggleBtn.Text = Config.AutoFarm and "Auto Farm: ON" or "Auto Farm: OFF"
-    ToggleBtn.BackgroundColor3 = Config.AutoFarm and ColorON or ColorOFF
+    SwitchBG.BackgroundColor3 = Config.AutoFarm and ColorON or ColorOFF
+    SwitchKnob.Position = Config.AutoFarm and UDim2.new(1, -20, 0.5, 0) or UDim2.new(0, 2, 0.5, 0)
     print("[IBdihP] Auto Farm toggled: " .. tostring(Config.AutoFarm))
 end)
 
 -- Delay Slider Bar (1.0s - 5.0s)
 local SliderBG = Instance.new("TextButton")
-SliderBG.Size = UDim2.new(1, -12, 0, 18)
-SliderBG.Position = UDim2.new(0, 6, 0, 35)
+SliderBG.Size = UDim2.new(1, -20, 0, 18)
+SliderBG.Position = UDim2.new(0, 10, 0, 36)
 SliderBG.BackgroundColor3 = Color3.fromRGB(20, 20, 28)
 SliderBG.Text = ""
 SliderBG.AutoButtonColor = false
@@ -188,7 +211,7 @@ end)
 -- Stop & Close Button
 local CloseBtn = Instance.new("TextButton")
 CloseBtn.Size = UDim2.new(1, -20, 0, 32)
-CloseBtn.Position = UDim2.new(0, 10, 0, 105)
+CloseBtn.Position = UDim2.new(0, 10, 0, 107)
 CloseBtn.BackgroundColor3 = ColorCLOSE
 CloseBtn.Text = "Stop & Close UI"
 CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -260,21 +283,21 @@ local function firePrompt(prompt)
     end
 end
 
--- Fires all Digimon partner skills (1 through 5) automatically
+-- Fires Digimon partner skills 1, 2, and 3 only (Slot 4 excluded)
 local function fireSkills()
-    -- 1. Trigger Digimon Era RemoteEvent directly if accessible
+    -- 1. Trigger Digimon Era RemoteEvent directly for slots 1, 2, 3
     pcall(function()
         local events = ReplicatedStorage:FindFirstChild("Events")
         local useMove = events and events:FindFirstChild("UseMove")
         if useMove then
-            for i = 1, 5 do
+            for i = 1, 3 do
                 useMove:FireServer(i)
             end
         end
     end)
 
-    -- 2. Emulate skill key presses 1-5 as a universal fail-safe
-    for _, keyCode in ipairs({Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three, Enum.KeyCode.Four, Enum.KeyCode.Five}) do
+    -- 2. Emulate skill key presses 1, 2, 3 only
+    for _, keyCode in ipairs({Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three}) do
         pcall(function()
             VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
             task.wait(0.02)
@@ -283,16 +306,22 @@ local function fireSkills()
     end
 end
 
--- Post-Kill Drop Sweeper
+-- Post-Kill Drop Sweeper with 2.0s hard timeout
 local function collectDropsSequence(root)
     local dropScope = Workspace:FindFirstChild("Drops") 
         or Workspace:FindFirstChild("LootDrops")
         or (Workspace:FindFirstChild("GameMap") and Workspace.GameMap:FindFirstChild("Drops"))
-        or Workspace
 
-    for _, obj in ipairs(dropScope:GetDescendants()) do
+    -- Fallback to top-level Workspace children only (prevents full-map scanning freezes)
+    local scanList = dropScope and dropScope:GetDescendants() or Workspace:GetChildren()
+    local startTime = tick()
+
+    for _, obj in ipairs(scanList) do
         if not Config.ScriptRunning or not Config.AutoFarm then break end
-        if obj:IsA("BasePart") and (obj.Name:find("Drop") or obj.Name:find("Loot") or obj:GetAttribute("Drop") or obj.Parent.Name == "Drops" or obj.Parent.Name == "LootDrops") then
+        -- Enforce a hard 2-second maximum sweep duration per kill
+        if (tick() - startTime) > 2.0 then break end
+
+        if obj:IsA("BasePart") and (obj.Name:find("Drop") or obj.Name:find("Loot") or obj:GetAttribute("Drop") or (obj.Parent and (obj.Parent.Name == "Drops" or obj.Parent.Name == "LootDrops"))) then
             root.CFrame = obj.CFrame
             local prompt = obj:FindFirstChildOfClass("ProximityPrompt")
             if prompt and prompt.Enabled then
@@ -343,8 +372,11 @@ task.spawn(function()
             if root then
                 local targetEnemyRoot, targetHum = getClosestEnemy(root)
                 if targetEnemyRoot and targetHum then
-                    -- 1. Battle enemy until dead while automatically firing all skills
+                    local combatStart = tick()
+
+                    -- 1. Battle enemy until dead (or 15s timeout if enemy gets bugged/stuck)
                     while Config.AutoFarm and Config.ScriptRunning and targetHum.Health > 0 and targetEnemyRoot.Parent do
+                        if (tick() - combatStart) > 15.0 then break end
                         local currentRoot = getRoot()
                         if not currentRoot then break end
                         currentRoot.CFrame = targetEnemyRoot.CFrame * CFrame.new(0, 0, Config.FarmDistance)
@@ -355,7 +387,7 @@ task.spawn(function()
                     -- 2. Enemy died: brief wait for loot drops to spawn
                     task.wait(0.35)
                     
-                    -- 3. Sweep and collect dropped loot items
+                    -- 3. Sweep and collect dropped loot items (capped at 2 seconds)
                     local postKillRoot = getRoot()
                     if postKillRoot then
                         collectDropsSequence(postKillRoot)
@@ -371,8 +403,8 @@ task.spawn(function()
 end)
 
 StarterGui:SetCore("SendNotification", {
-    Title = "IBdihP v3.0 Loaded";
-    Text = "Sequential Auto Farm & Auto Skills Active!";
+    Title = "IBdihP v3.1 Loaded";
+    Text = "Sequential Auto Farm (Skills 1-3) & Switch UI Active!";
     Duration = 4;
 })
-print("[IBdihP] Dedicated Auto Farm v3.0 running successfully.")
+print("[IBdihP] Dedicated Auto Farm v3.1 running successfully.")
