@@ -1,8 +1,8 @@
 --[[
-    IBdihP Hub - Digimon Era Standalone (v4.2 - Dedicated Partner Ground-Truth Fix)
+    IBdihP Hub - Digimon Era Standalone (v4.3 - Combat Resolution & In-Combat Re-Teleport Engine)
     Features:
-      1. Auto Farm: Teleports Player + Partner -> Skills 1,2,3 -> Collect Drops -> Repeat
-      2. Auto Chest: Teleports Player + Partner -> Open -> Kill Guard -> Re-open -> Repeat
+      1. Auto Farm: Initial Teleport -> Fight until Resolved (Re-teleports only after FarmDelay if enemy survives) -> Collect Drops -> Repeat
+      2. Auto Chest: Initial Teleport -> Open -> Guard Spawn Fight (Re-teleports only after ChestsDelay if Guard survives) -> Re-open -> Repeat
       3. Open Map: Teleports to Carrots -> Collect -> Repeat
       4. Auto Potion: Reads InFight HealthText -> Uses Key 4 at Threshold -> Auto-Back when Empty
 ]]
@@ -17,7 +17,7 @@ local VirtualInputManager = game:GetService("VirtualInputManager")
 
 local LocalPlayer = Players.LocalPlayer
 
-print("[IBdihP] Initializing v4.2 Standalone Engine...")
+print("[IBdihP] Initializing v4.3 Standalone Engine...")
 
 -- ==========================================
 -- 1. LOBBY & EXECUTOR ACCESS CHECK
@@ -45,7 +45,7 @@ local Config = {
     OpenMap = false,
     AutoPotion = true,
     
-    -- Delay Times & Thresholds
+    -- Delay Times & Thresholds (Now used for In-Combat Re-Teleport interval)
     FarmDelay = 1.0,
     ChestsDelay = 1.5,
     OpenMapDelay = 1.0,
@@ -91,7 +91,7 @@ MainCorner.Parent = MainFrame
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, 0, 0, 32)
 TitleLabel.BackgroundColor3 = Color3.fromRGB(32, 32, 45)
-TitleLabel.Text = "IBdihP | Standalone Engine v4.2"
+TitleLabel.Text = "IBdihP | Standalone Engine v4.3"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.TextSize = 13
 TitleLabel.Font = Enum.Font.GothamBold
@@ -656,16 +656,26 @@ local function getAvailableCarrot(root)
     return closestPart, closestPrompt
 end
 
--- Core combat execution helper (Teleports partner continuously during fight)
-local function battleEnemy(enemyRoot, enemyHum)
+-- Core combat execution helper:
+-- Teleports initially, fights until combat resolved (partner or enemy dies).
+-- Re-teleports during combat only after delayDuration has elapsed if enemy survives.
+local function battleEnemy(enemyRoot, enemyHum, delayDuration)
     local combatStart = tick()
+    local lastTeleportTime = 0 -- Triggers teleport on initial tick
+
     while Config.ScriptRunning and (Config.AutoFarm or Config.AutoChests) and enemyHum.Health > 0 and enemyRoot.Parent do
         if (tick() - combatStart) > 15.0 then break end
+        if getAliveDigimonCount() == 1 then break end
         local currentRoot = getRoot()
         if not currentRoot then break end
         
-        currentRoot.CFrame = enemyRoot.CFrame * CFrame.new(0, 0, Config.FarmDistance)
-        teleportPartner(currentRoot.CFrame)
+        -- Only teleport/re-teleport initially or if the delay slider interval has passed
+        if (tick() - lastTeleportTime) >= (delayDuration or 1.0) then
+            currentRoot.CFrame = enemyRoot.CFrame * CFrame.new(0, 0, Config.FarmDistance)
+            teleportPartner(currentRoot.CFrame)
+            lastTeleportTime = tick()
+        end
+        
         fireSkills()
         task.wait(0.2)
     end
@@ -681,15 +691,14 @@ task.spawn(function()
             if root then
                 local enemyRoot, enemyHum = getClosestEnemy(root, false)
                 if enemyRoot and enemyHum then
-                    battleEnemy(enemyRoot, enemyHum)
+                    -- Fights until resolved; FarmDelay is used to re-teleport during combat if enemy survives
+                    battleEnemy(enemyRoot, enemyHum, Config.FarmDelay)
                     
                     task.wait(0.35)
                     local postKillRoot = getRoot()
                     if postKillRoot then
                         collectDropsSequence(postKillRoot)
                     end
-                    
-                    task.wait(Config.FarmDelay)
                 end
             end
         end
@@ -719,7 +728,8 @@ task.spawn(function()
                         local guardRoot, guardHum = getClosestEnemy(getRoot(), true)
                         if guardRoot and guardHum then
                             print("[IBdihP] Guard Digimon detected! Engaging...")
-                            battleEnemy(guardRoot, guardHum)
+                            -- Fights until resolved; ChestsDelay is used to re-teleport during Guard combat if it survives
+                            battleEnemy(guardRoot, guardHum, Config.ChestsDelay)
                             task.wait(0.35)
                             collectDropsSequence(getRoot())
                             break
@@ -737,8 +747,6 @@ task.spawn(function()
                             firePrompt(chestPrompt)
                         end
                     end
-                    
-                    task.wait(Config.ChestsDelay)
                 else
                     print("[IBdihP] No more unopened chests found. Disabling Auto Chest.")
                     if UIControllers.AutoChests then
@@ -783,8 +791,8 @@ task.spawn(function()
 end)
 
 StarterGui:SetCore("SendNotification", {
-    Title = "IBdihP v4.2 Loaded";
-    Text = "Partner Ground-Truth & Potion Engine Active!";
+    Title = "IBdihP v4.3 Loaded";
+    Text = "Combat Resolution & In-Combat Teleport Delayer Active!";
     Duration = 4;
 })
-print("[IBdihP] Standalone Engine v4.2 running successfully.")
+print("[IBdihP] Standalone Engine v4.3 running successfully.")
