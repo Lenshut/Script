@@ -1,6 +1,9 @@
 --[[
-    IBdihP Hub - Digimon Era Standalone (v3.1 - Switch UI & Fixed Sequence)
-    Logic: Teleport to Enemy -> Fire Skills (1, 2, 3) -> Enemy Dies -> Collect Drops (Max 2s) -> Wait (Slider Delay) -> Repeat
+    IBdihP Hub - Digimon Era Standalone (v3.2 - Emergency Retreat & Slot 4 Heal)
+    Logic:
+      • Sequential Auto Farm (Skills 1, 2, 3)
+      • Emergency Retreat: Clicks "Back" button if Alive Digimon <= 1
+      • Auto-Heal: Uses hotbar Slot 4 (Key 4) during combat
 ]]
 
 local Players = game:GetService("Players")
@@ -13,7 +16,7 @@ local VirtualInputManager = game:GetService("VirtualInputManager")
 
 local LocalPlayer = Players.LocalPlayer
 
-print("[IBdihP] Initializing Dedicated Auto Farm v3.1...")
+print("[IBdihP] Initializing Dedicated Auto Farm v3.2...")
 
 -- ==========================================
 -- 1. LOBBY & EXECUTOR ACCESS CHECK
@@ -34,8 +37,11 @@ end
 local Config = {
     ScriptRunning = true,
     AutoFarm = false,
+    AutoHealSlot4 = true,       -- Automatically taps Slot 4 during combat
+    EmergencyRetreat = true,    -- Taps "Back" button when Alive Digimon <= 1
     FarmDistance = 5,
-    FarmDelay = 1.0 -- Seconds: 1.0 to 5.0 (Controlled by slider)
+    FarmDelay = 1.0,            -- Controlled by UI slider (1.0s to 5.0s)
+    HealInterval = 3.0          -- Taps Slot 4 every 3 seconds while fighting
 }
 
 -- ==========================================
@@ -260,7 +266,7 @@ UserInputService.InputChanged:Connect(function(input)
 end)
 
 -- ==========================================
--- 4. HELPER FUNCTIONS
+-- 4. HELPER & CORE FUNCTIONS
 -- ==========================================
 local function getRoot()
     local char = LocalPlayer.Character
@@ -283,9 +289,55 @@ local function firePrompt(prompt)
     end
 end
 
+-- Counts currently alive Digimon in your party / workspace
+local function getAliveDigimonCount()
+    local count = 0
+    -- Check LocalPlayer character first
+    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
+        if LocalPlayer.Character.Humanoid.Health > 0 then
+            count = count + 1
+        end
+    end
+
+    -- Scan Workspace for friendly partner models owned by LocalPlayer
+    for _, obj in ipairs(Workspace:GetChildren()) do
+        if obj:IsA("Model") and obj ~= LocalPlayer.Character then
+            local ownerAttr = obj:GetAttribute("Owner") or obj:GetAttribute("Player")
+            if ownerAttr == LocalPlayer.Name or ownerAttr == LocalPlayer.UserId then
+                local hum = obj:FindFirstChildOfClass("Humanoid")
+                if hum and hum.Health > 0 then
+                    count = count + 1
+                end
+            end
+        end
+    end
+    return count
+end
+
+-- Automatically clicks the "Back" / Retreat button inside PlayerGui
+local function pressBackButton()
+    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+    if not playerGui then return end
+
+    for _, desc in ipairs(playerGui:GetDescendants()) do
+        if desc:IsA("TextButton") or desc:IsA("ImageButton") then
+            local btnName = desc.Name:lower()
+            local btnText = desc:IsA("TextButton") and desc.Text:lower() or ""
+            
+            if btnName == "back" or btnName == "retreat" or btnText == "back" or btnText == "retreat" then
+                if desc.Visible and desc.Active then
+                    print("[IBdihP] Emergency Retreat: Clicking Back Button (" .. desc.Name .. ")")
+                    pcall(function()
+                        desc:Activate()
+                    end)
+                end
+            end
+        end
+    end
+end
+
 -- Fires Digimon partner skills 1, 2, and 3 only (Slot 4 excluded)
 local function fireSkills()
-    -- 1. Trigger Digimon Era RemoteEvent directly for slots 1, 2, 3
     pcall(function()
         local events = ReplicatedStorage:FindFirstChild("Events")
         local useMove = events and events:FindFirstChild("UseMove")
@@ -296,7 +348,6 @@ local function fireSkills()
         end
     end)
 
-    -- 2. Emulate skill key presses 1, 2, 3 only
     for _, keyCode in ipairs({Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three}) do
         pcall(function()
             VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
@@ -306,19 +357,26 @@ local function fireSkills()
     end
 end
 
+-- Uses Recovery Item equipped on Hotbar Slot 4 (Key 4)
+local function useSlot4Item()
+    pcall(function()
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Four, false, game)
+        task.wait(0.05)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Four, false, game)
+    end)
+end
+
 -- Post-Kill Drop Sweeper with 2.0s hard timeout
 local function collectDropsSequence(root)
     local dropScope = Workspace:FindFirstChild("Drops") 
         or Workspace:FindFirstChild("LootDrops")
         or (Workspace:FindFirstChild("GameMap") and Workspace.GameMap:FindFirstChild("Drops"))
 
-    -- Fallback to top-level Workspace children only (prevents full-map scanning freezes)
     local scanList = dropScope and dropScope:GetDescendants() or Workspace:GetChildren()
     local startTime = tick()
 
     for _, obj in ipairs(scanList) do
         if not Config.ScriptRunning or not Config.AutoFarm then break end
-        -- Enforce a hard 2-second maximum sweep duration per kill
         if (tick() - startTime) > 2.0 then break end
 
         if obj:IsA("BasePart") and (obj.Name:find("Drop") or obj.Name:find("Loot") or obj:GetAttribute("Drop") or (obj.Parent and (obj.Parent.Name == "Drops" or obj.Parent.Name == "LootDrops"))) then
@@ -333,7 +391,30 @@ local function collectDropsSequence(root)
 end
 
 -- ==========================================
--- 5. SEQUENTIAL ENEMY FARMER & SKILL LOOP
+-- 5. EMERGENCY RETREAT MONITOR LOOP
+-- ==========================================
+task.spawn(function()
+    while Config.ScriptRunning do
+        if Config.AutoFarm and Config.EmergencyRetreat then
+            local aliveCount = getAliveDigimonCount()
+            -- If only 1 Digimon remains alive, automatically trigger retreat
+            if aliveCount <= 1 and aliveCount > 0 then
+                print("[IBdihP] Emergency! Alive Digimon count <= 1. Pressing Back...")
+                Config.AutoFarm = false
+                SwitchBG.BackgroundColor3 = ColorOFF
+                SwitchKnob.Position = UDim2.new(0, 2, 0.5, 0)
+                ToggleBtn.Text = "Auto Farm: OFF (Retreated)"
+                
+                pressBackButton()
+                task.wait(2.0) -- Cooldown after retreating
+            end
+        end
+        task.wait(0.5)
+    end
+end)
+
+-- ==========================================
+-- 6. SEQUENTIAL ENEMY FARMER & SKILL LOOP
 -- ==========================================
 local function getClosestEnemy(root)
     local closestEnemy = nil
@@ -366,6 +447,8 @@ local function getClosestEnemy(root)
 end
 
 task.spawn(function()
+    local lastHealTime = 0
+
     while Config.ScriptRunning do
         if Config.AutoFarm then
             local root = getRoot()
@@ -374,17 +457,28 @@ task.spawn(function()
                 if targetEnemyRoot and targetHum then
                     local combatStart = tick()
 
-                    -- 1. Battle enemy until dead (or 15s timeout if enemy gets bugged/stuck)
+                    -- 1. Battle enemy until dead (15s timeout fail-safe)
                     while Config.AutoFarm and Config.ScriptRunning and targetHum.Health > 0 and targetEnemyRoot.Parent do
                         if (tick() - combatStart) > 15.0 then break end
                         local currentRoot = getRoot()
                         if not currentRoot then break end
+                        
+                        -- Maintain combat position
                         currentRoot.CFrame = targetEnemyRoot.CFrame * CFrame.new(0, 0, Config.FarmDistance)
+                        
+                        -- Fire Skills 1, 2, 3
                         fireSkills()
+
+                        -- Check and tap Slot 4 item at safe interval
+                        if Config.AutoHealSlot4 and (tick() - lastHealTime) >= Config.HealInterval then
+                            useSlot4Item()
+                            lastHealTime = tick()
+                        end
+
                         task.wait(0.2)
                     end
                     
-                    -- 2. Enemy died: brief wait for loot drops to spawn
+                    -- 2. Enemy died: wait briefly for loot drops to spawn
                     task.wait(0.35)
                     
                     -- 3. Sweep and collect dropped loot items (capped at 2 seconds)
@@ -403,8 +497,8 @@ task.spawn(function()
 end)
 
 StarterGui:SetCore("SendNotification", {
-    Title = "IBdihP v3.1 Loaded";
-    Text = "Sequential Auto Farm (Skills 1-3) & Switch UI Active!";
+    Title = "IBdihP v3.2 Loaded";
+    Text = "Sequential Farm, Emergency Retreat & Slot 4 Heal Active!";
     Duration = 4;
 })
-print("[IBdihP] Dedicated Auto Farm v3.1 running successfully.")
+print("[IBdihP] Dedicated Auto Farm v3.2 running successfully.")
