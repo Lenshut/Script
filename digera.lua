@@ -1,5 +1,5 @@
 --[[
-    IBdihP Hub - Digimon Era Standalone (v4.1 - 4-Menu Engine & Partner Teleport)
+    IBdihP Hub - Digimon Era Standalone (v4.2 - Dedicated Partner Ground-Truth Fix)
     Features:
       1. Auto Farm: Teleports Player + Partner -> Skills 1,2,3 -> Collect Drops -> Repeat
       2. Auto Chest: Teleports Player + Partner -> Open -> Kill Guard -> Re-open -> Repeat
@@ -17,7 +17,7 @@ local VirtualInputManager = game:GetService("VirtualInputManager")
 
 local LocalPlayer = Players.LocalPlayer
 
-print("[IBdihP] Initializing v4.1 Standalone Engine...")
+print("[IBdihP] Initializing v4.2 Standalone Engine...")
 
 -- ==========================================
 -- 1. LOBBY & EXECUTOR ACCESS CHECK
@@ -91,7 +91,7 @@ MainCorner.Parent = MainFrame
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, 0, 0, 32)
 TitleLabel.BackgroundColor3 = Color3.fromRGB(32, 32, 45)
-TitleLabel.Text = "IBdihP | Standalone Engine v4.1"
+TitleLabel.Text = "IBdihP | Standalone Engine v4.2"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.TextSize = 13
 TitleLabel.Font = Enum.Font.GothamBold
@@ -325,17 +325,29 @@ local function getRoot()
     return nil
 end
 
--- Teleports all friendly partner Digimon models instantly next to your character
-local function teleportPartner(targetCFrame)
-    for _, obj in ipairs(Workspace:GetChildren()) do
-        if obj:IsA("Model") and obj ~= LocalPlayer.Character then
-            local ownerAttr = obj:GetAttribute("Owner") or obj:GetAttribute("Player")
-            if ownerAttr == LocalPlayer.Name or ownerAttr == LocalPlayer.UserId then
-                local partnerRoot = obj.PrimaryPart or obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChildWhichIsA("BasePart")
-                if partnerRoot then
-                    partnerRoot.CFrame = targetCFrame * CFrame.new(3, 0, 2)
+-- Ground Truth: Grabs your Digimon models from Workspace.PlayersDigimons["Player_" .. UserId]
+local function getMyDigimons()
+    local digimonList = {}
+    local playersDigimons = Workspace:FindFirstChild("PlayersDigimons")
+    if playersDigimons then
+        local myFolder = playersDigimons:FindFirstChild("Player_" .. tostring(LocalPlayer.UserId))
+        if myFolder then
+            for _, model in ipairs(myFolder:GetChildren()) do
+                if model:IsA("Model") then
+                    table.insert(digimonList, model)
                 end
             end
+        end
+    end
+    return digimonList
+end
+
+-- Teleports all your partner Digimon models instantly next to your character
+local function teleportPartner(targetCFrame)
+    for _, obj in ipairs(getMyDigimons()) do
+        local partnerRoot = obj.PrimaryPart or obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChildWhichIsA("BasePart")
+        if partnerRoot then
+            partnerRoot.CFrame = targetCFrame * CFrame.new(3, 0, 2)
         end
     end
 end
@@ -371,6 +383,24 @@ local function pressBackButton()
             end
         end
     end
+end
+
+-- Counts currently alive Digimon in your party using Ground Truth
+local function getAliveDigimonCount()
+    local count = 0
+    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
+        if LocalPlayer.Character.Humanoid.Health > 0 then
+            count = count + 1
+        end
+    end
+
+    for _, obj in ipairs(getMyDigimons()) do
+        local hum = obj:FindFirstChildOfClass("Humanoid")
+        if hum and hum.Health > 0 then
+            count = count + 1
+        end
+    end
+    return count
 end
 
 -- Reads active Digimon HP percentage from PlayerGui HealthText
@@ -468,25 +498,20 @@ local function collectDropsSequence(root)
     end
 end
 
--- Enforces 3x movement speed (48 WalkSpeed) when Auto Farm or Auto Chests is active
+-- Ground Truth: Enforces 3x movement speed (48 WalkSpeed) on Player AND Partner Models
 task.spawn(function()
     while Config.ScriptRunning do
         local targetSpeed = (Config.AutoFarm or Config.AutoChests) and 48 or 16
         if LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
             LocalPlayer.Character.Humanoid.WalkSpeed = targetSpeed
         end
-        for _, obj in ipairs(Workspace:GetChildren()) do
-            if obj:IsA("Model") and obj ~= LocalPlayer.Character then
-                local ownerAttr = obj:GetAttribute("Owner") or obj:GetAttribute("Player")
-                if ownerAttr == LocalPlayer.Name or ownerAttr == LocalPlayer.UserId then
-                    local hum = obj:FindFirstChildOfClass("Humanoid")
-                    if hum then
-                        hum.WalkSpeed = targetSpeed
-                    end
-                end
+        for _, obj in ipairs(getMyDigimons()) do
+            local hum = obj:FindFirstChildOfClass("Humanoid")
+            if hum then
+                hum.WalkSpeed = targetSpeed
             end
         end
-        task.wait(0.3)
+        task.wait(0.2)
     end
     if LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
         LocalPlayer.Character.Humanoid.WalkSpeed = 16
@@ -499,6 +524,16 @@ end)
 task.spawn(function()
     local lowHPChecks = 0
     while Config.ScriptRunning do
+        -- 1. Check Emergency Retreat first (Alive Digimon == 1)
+        if (Config.AutoFarm or Config.AutoChests) and getAliveDigimonCount() == 1 then
+            print("[IBdihP] Emergency! Exactly 1 Alive Digimon remaining. Pressing Back...")
+            if UIControllers.AutoFarm then UIControllers.AutoFarm(false) else Config.AutoFarm = false end
+            if UIControllers.AutoChests then UIControllers.AutoChests(false) else Config.AutoChests = false end
+            pressBackButton()
+            task.wait(2.0)
+        end
+
+        -- 2. Check Auto Potion threshold
         if Config.AutoPotion and (Config.AutoFarm or Config.AutoChests) then
             local currentHP = getInFightHPPercentage()
             if currentHP <= Config.PotionThreshold then
@@ -621,7 +656,7 @@ local function getAvailableCarrot(root)
     return closestPart, closestPrompt
 end
 
--- Core combat execution helper
+-- Core combat execution helper (Teleports partner continuously during fight)
 local function battleEnemy(enemyRoot, enemyHum)
     local combatStart = tick()
     while Config.ScriptRunning and (Config.AutoFarm or Config.AutoChests) and enemyHum.Health > 0 and enemyRoot.Parent do
@@ -748,8 +783,8 @@ task.spawn(function()
 end)
 
 StarterGui:SetCore("SendNotification", {
-    Title = "IBdihP v4.1 Loaded";
-    Text = "4-Menu Standalone Engine & Partner Teleport Active!";
+    Title = "IBdihP v4.2 Loaded";
+    Text = "Partner Ground-Truth & Potion Engine Active!";
     Duration = 4;
 })
-print("[IBdihP] Standalone Engine v4.1 running successfully.")
+print("[IBdihP] Standalone Engine v4.2 running successfully.")
